@@ -1,16 +1,21 @@
 mod traits;
 use traits::Add;
+use traits::AddEq;
 use traits::BitAnd;
 use traits::BitOr;
 use traits::BitXor;
 use traits::Copy;
 use traits::Div;
+use traits::DivEq;
 use traits::Drop;
 use traits::Mul;
+use traits::MulEq;
 use traits::PartialEq;
 use traits::PartialOrd;
 use traits::Rem;
+use traits::RemEq;
 use traits::Sub;
+use traits::SubEq;
 use traits::ToBool;
 
 #[derive(Copy, Drop)]
@@ -83,6 +88,13 @@ impl FeltAdd of Add::<felt> {
         felt_add(a, b)
     }
 }
+impl FeltAddEq of AddEq::<felt> {
+    #[inline(always)]
+    fn add_eq(ref self: felt, other: felt) {
+        self = Add::add(self, other);
+    }
+}
+
 extern fn felt_add(a: felt, b: felt) -> felt nopanic;
 impl FeltSub of Sub::<felt> {
     #[inline(always)]
@@ -90,6 +102,13 @@ impl FeltSub of Sub::<felt> {
         felt_sub(a, b)
     }
 }
+impl FeltSubEq of SubEq::<felt> {
+    #[inline(always)]
+    fn sub_eq(ref self: felt, other: felt) {
+        self = Sub::sub(self, other);
+    }
+}
+
 extern fn felt_sub(a: felt, b: felt) -> felt nopanic;
 impl FeltMul of Mul::<felt> {
     #[inline(always)]
@@ -97,6 +116,13 @@ impl FeltMul of Mul::<felt> {
         felt_mul(a, b)
     }
 }
+impl FeltMulEq of MulEq::<felt> {
+    #[inline(always)]
+    fn mul_eq(ref self: felt, other: felt) {
+        self = Mul::mul(self, other);
+    }
+}
+
 extern fn felt_mul(a: felt, b: felt) -> felt nopanic;
 #[inline(always)]
 fn felt_neg(a: felt) -> felt {
@@ -189,7 +215,7 @@ use array::array_len;
 use array::ArrayTrait;
 use array::ArrayImpl;
 impl ArrayFeltDrop of Drop::<Array::<felt>>;
-type usize = u64;
+type usize = u32;
 
 // Dictionary.
 mod dict;
@@ -249,6 +275,7 @@ use integer::u128_const;
 use integer::u128_from_felt;
 use integer::u128_try_from_felt;
 use integer::u128_to_felt;
+use integer::u128_sqrt;
 use integer::U128Add;
 use integer::U128Sub;
 use integer::U128Mul;
@@ -266,18 +293,48 @@ use integer::u8_from_felt;
 use integer::u8_try_from_felt;
 use integer::u8_to_felt;
 use integer::U8Add;
-use integer::U8Sub;
-use integer::U8PartialOrd;
+use integer::U8Div;
 use integer::U8PartialEq;
+use integer::U8PartialOrd;
+use integer::U8Rem;
+use integer::U8Sub;
+use integer::U8Mul;
+use integer::u16;
+use integer::u16_const;
+use integer::u16_from_felt;
+use integer::u16_try_from_felt;
+use integer::u16_to_felt;
+use integer::U16Add;
+use integer::U16Div;
+use integer::U16PartialEq;
+use integer::U16PartialOrd;
+use integer::U16Rem;
+use integer::U16Sub;
+use integer::U16Mul;
+use integer::u32;
+use integer::u32_const;
+use integer::u32_from_felt;
+use integer::u32_try_from_felt;
+use integer::u32_to_felt;
+use integer::U32Add;
+use integer::U32Div;
+use integer::U32PartialEq;
+use integer::U32PartialOrd;
+use integer::U32Rem;
+use integer::U32Sub;
+use integer::U32Mul;
 use integer::u64;
 use integer::u64_const;
 use integer::u64_from_felt;
 use integer::u64_try_from_felt;
 use integer::u64_to_felt;
 use integer::U64Add;
-use integer::U64Sub;
-use integer::U64PartialOrd;
+use integer::U64Div;
 use integer::U64PartialEq;
+use integer::U64PartialOrd;
+use integer::U64Rem;
+use integer::U64Sub;
+use integer::U64Mul;
 use integer::u256;
 use integer::U256Add;
 use integer::U256Sub;
@@ -316,6 +373,7 @@ fn assert(cond: bool, err_code: felt) {
 
 // Serialization and Deserialization.
 mod serde;
+mod starknet_serde;
 
 // Hash functions.
 mod hash;

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use cairo_lang_defs::ids::ModuleFileId;
+use cairo_lang_diagnostics::skip_diagnostic;
 
 pub use self::demand::Demand;
 use crate::diagnostic::LoweringDiagnosticKind::*;
@@ -32,6 +33,7 @@ pub struct BorrowChecker<'a> {
     /// New block ends to be applied at the end of the borrow checking, for optimization.
     new_ends: HashMap<BlockId, FlatBlockEnd>,
     cache: HashMap<RealBlock, Demand>,
+    success: bool,
 }
 
 impl<'a> BorrowChecker<'a> {
@@ -152,7 +154,8 @@ impl<'a> BorrowChecker<'a> {
                 | Statement::Call(_)
                 | Statement::StructConstruct(_)
                 | Statement::StructDestructure(_)
-                | Statement::EnumConstruct(_) => continue,
+                | Statement::EnumConstruct(_)
+                | Statement::Snapshot(_) => continue,
             };
             return Some((stmt_offset + i, demand));
         }
@@ -198,11 +201,16 @@ pub fn borrow_check(module_file_id: ModuleFileId, lowered: &mut FlatLowered) {
             lowered,
             cache: Default::default(),
             new_ends: Default::default(),
+            success: true,
         };
         let root_demand = checker.get_demand(None, RealBlock(root, 0));
+        let success = checker.success;
         assert!(root_demand.vars.is_empty(), "Undefined variable should not happen at this stage");
         for (block_id, new_end) in checker.new_ends {
             lowered.blocks[block_id].end = new_end;
+        }
+        if !success {
+            lowered.root = Err(skip_diagnostic());
         }
     }
 

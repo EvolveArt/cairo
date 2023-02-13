@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use cairo_lang_defs::ids::{FunctionWithBodyId, GenericParamId};
+use cairo_lang_defs::ids::FunctionWithBodyId;
 use cairo_lang_diagnostics::{Diagnostics, Maybe, ToMaybe};
 use cairo_lang_proc_macros::DebugWithDb;
 use cairo_lang_syntax::node::ast;
@@ -28,9 +28,9 @@ pub fn function_declaration_diagnostics(
         FunctionWithBodyId::Free(free_function_id) => {
             db.priv_free_function_declaration_data(free_function_id)
         }
-        FunctionWithBodyId::Impl(impl_function_id) => {
-            db.priv_impl_function_declaration_data(impl_function_id)
-        }
+        FunctionWithBodyId::Impl(impl_function_id) => db
+            .priv_impl_function_declaration_data(impl_function_id)
+            .map(|x| x.function_declaration_data),
     };
     declaration_data.map(|data| data.diagnostics).unwrap_or_default()
 }
@@ -51,7 +51,7 @@ pub fn function_with_body_signature(
 pub fn function_with_body_generic_params(
     db: &dyn SemanticGroup,
     function_id: FunctionWithBodyId,
-) -> Maybe<Vec<GenericParamId>> {
+) -> Maybe<Vec<semantic::GenericParam>> {
     match function_id {
         FunctionWithBodyId::Free(free_function_id) => {
             db.free_function_generic_params(free_function_id)
@@ -71,9 +71,10 @@ pub fn function_with_body_attributes(
         FunctionWithBodyId::Free(free_function_id) => {
             Ok(db.priv_free_function_declaration_data(free_function_id)?.attributes)
         }
-        FunctionWithBodyId::Impl(impl_function_id) => {
-            Ok(db.priv_impl_function_declaration_data(impl_function_id)?.attributes)
-        }
+        FunctionWithBodyId::Impl(impl_function_id) => Ok(db
+            .priv_impl_function_declaration_data(impl_function_id)?
+            .function_declaration_data
+            .attributes),
     }
 }
 

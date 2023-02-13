@@ -1,7 +1,8 @@
 #[cfg(test)]
 mod test;
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::hash_map::Entry;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use cairo_lang_defs::ids::{FunctionWithBodyId, LanguageElementId};
@@ -10,7 +11,7 @@ use cairo_lang_semantic::ConcreteFunctionWithBodyId;
 use cairo_lang_syntax::node::ast;
 use cairo_lang_utils::extract_matches;
 use cairo_lang_utils::ordered_hash_map::OrderedHashMap;
-use itertools::{chain, izip, Itertools};
+use itertools::{izip, Itertools};
 
 use crate::blocks::FlatBlocks;
 use crate::db::LoweringGroup;
@@ -19,7 +20,8 @@ use crate::lower::context::{LoweringContext, LoweringContextBuilder, VarRequest}
 use crate::{
     BlockId, FlatBlock, FlatBlockEnd, FlatLowered, Statement, StatementCall,
     StatementEnumConstruct, StatementLiteral, StatementMatchEnum, StatementMatchExtern,
-    StatementStructConstruct, StatementStructDestructure, VarRemapping, VariableId,
+    StatementSnapshot, StatementStructConstruct, StatementStructDestructure, VarRemapping,
+    VariableId,
 };
 
 #[derive(Debug, PartialEq, Eq)]
@@ -27,6 +29,7 @@ pub enum InlineConfiguration {
     // The user did not specify any inlining preferences.
     None,
     Always,
+    Never,
 }
 
 /// data about inlining.
@@ -41,8 +44,10 @@ pub struct PrivInlineData {
 /// Per function information for the inlining phase.
 #[derive(Debug, PartialEq, Eq)]
 pub struct InlineInfo {
+    // Indicates that the function can be inlined.
     pub is_inlineable: bool,
-    pub has_early_return: bool,
+    // Indicates that the function should be inlined.
+    pub should_inline: bool,
 }
 
 pub fn priv_inline_data(
@@ -52,10 +57,14 @@ pub fn priv_inline_data(
     let mut diagnostics = LoweringDiagnostics::new(function_id.module_file_id(db.upcast()));
     let config = parse_inline_attribute(db, &mut diagnostics, function_id)?;
 
-    // If the the function is marked as #[inline(always)], we need to report
-    // inlining problems.
-    let report_diagnostics = config == InlineConfiguration::Always;
-    let info = gather_inlining_info(db, &mut diagnostics, report_diagnostics, function_id)?;
+    let info = if config == InlineConfiguration::Never {
+        InlineInfo { is_inlineable: false, should_inline: false }
+    } else {
+        // If the the function is marked as #[inline(always)], we need to report
+        // inlining problems.
+        let report_diagnostics = config == InlineConfiguration::Always;
+        gather_inlining_info(db, &mut diagnostics, report_diagnostics, function_id)?
+    };
 
     Ok(Arc::new(PrivInlineData { diagnostics: diagnostics.build(), config, info }))
 }
@@ -68,7 +77,7 @@ fn gather_inlining_info(
     report_diagnostics: bool,
     function_id: FunctionWithBodyId,
 ) -> Maybe<InlineInfo> {
-    let mut info = InlineInfo { is_inlineable: false, has_early_return: false };
+    let mut info = InlineInfo { is_inlineable: false, should_inline: false };
     let defs_db = db.upcast();
     if db
             .function_with_body_direct_function_with_body_callees(function_id)?
@@ -88,31 +97,10 @@ fn gather_inlining_info(
 
     let lowered = db.priv_function_with_body_lowered_flat(function_id)?;
     let root_block_id = lowered.root?;
-    let input_vars: HashSet<VariableId> =
-        lowered.blocks[root_block_id].inputs.iter().copied().collect();
+
     for (block_id, block) in lowered.blocks.iter() {
         match &block.end {
-            FlatBlockEnd::Return { .. } if block_id != root_block_id => {
-                if report_diagnostics {
-                    diagnostics.report(
-                        function_id.untyped_stable_ptr(defs_db),
-                        LoweringDiagnosticKind::InliningFunctionWithEarlyReturnNotSupported,
-                    );
-                }
-
-                info.has_early_return = true;
-            }
-            FlatBlockEnd::Return(returns) => {
-                if returns.iter().any(|r| input_vars.contains(r)) {
-                    if report_diagnostics {
-                        diagnostics.report(
-                            function_id.untyped_stable_ptr(defs_db),
-                            LoweringDiagnosticKind::InliningFunctionWithIdentityVarsNotSupported,
-                        );
-                    }
-                    return Ok(info);
-                }
-            }
+            FlatBlockEnd::Return(_) => {}
             FlatBlockEnd::Unreachable => {
                 // TODO(ilya): Remove the following limitation.
                 if block_id == root_block_id {
@@ -134,7 +122,24 @@ fn gather_inlining_info(
     }
 
     info.is_inlineable = true;
+    info.should_inline = should_inline(db, &lowered)?;
+
     Ok(info)
+}
+
+// A heuristic to decide if a function should be inlined.
+fn should_inline(_db: &dyn LoweringGroup, lowered: &FlatLowered) -> Maybe<bool> {
+    let root_block_id = lowered.root?;
+    let root_block = &lowered.blocks[root_block_id];
+
+    match &root_block.end {
+        FlatBlockEnd::Return(_) | FlatBlockEnd::Unreachable => {}
+        FlatBlockEnd::Callsite(_) | FlatBlockEnd::Fallthrough(..) | FlatBlockEnd::Goto(..) => {
+            panic!("Unexpected block end.");
+        }
+    };
+    // Inline function that only call another function or returns a literal.
+    Ok(matches!(root_block.statements.as_slice(), [Statement::Call(_) | Statement::Literal(_)]))
 }
 
 /// Parses the inline attributes for a given function.
@@ -153,6 +158,9 @@ fn parse_inline_attribute(
         match &attr.args[..] {
             [ast::Expr::Path(path)] if &path.node.get_text(db.upcast()) == "always" => {
                 config = InlineConfiguration::Always;
+            }
+            [ast::Expr::Path(path)] if &path.node.get_text(db.upcast()) == "never" => {
+                config = InlineConfiguration::Never;
             }
             [] => {
                 diagnostics.report(
@@ -328,6 +336,10 @@ impl<'a, 'b> Mapper<'a, 'b> {
                     })
                     .collect(),
             }),
+            Statement::Snapshot(stmt) => Statement::Snapshot(StatementSnapshot {
+                input: self.rename_var(&stmt.input),
+                output: self.rename_var(&stmt.output),
+            }),
         }
     }
 }
@@ -388,37 +400,11 @@ impl<'db> FunctionInlinerRewriter<'db> {
                     self.inlining_failed = true;
                 }
 
-                if inline_data.config == InlineConfiguration::Always
-                    && inline_data.info.is_inlineable
+                if inline_data.info.is_inlineable
+                    && (inline_data.info.should_inline
+                        || inline_data.config == InlineConfiguration::Always)
                 {
-                    let optional_return_block_id = if inline_data.info.has_early_return {
-                        // if the inlined function has an early return then we need to split the
-                        // current block after the call instruction.
-
-                        // Create a new block with all the instructions that follow the call
-                        // instruction.
-                        let block_id = self.block_queue.enqueue_block(FlatBlock {
-                            inputs: vec![],
-                            statements: self.statement_rewrite_stack.consume(),
-                            end: self.block_end.clone(),
-                        });
-
-                        // Once the current block ends it should fallthrough to the above block.
-                        self.block_end = FlatBlockEnd::Fallthrough(
-                            block_id,
-                            VarRemapping { remapping: OrderedHashMap::default() },
-                        );
-                        Some(block_id)
-                    } else {
-                        None
-                    };
-
-                    return self.inline_function(
-                        function_id,
-                        &stmt.inputs,
-                        &stmt.outputs,
-                        optional_return_block_id,
-                    );
+                    return self.inline_function(function_id, &stmt.inputs, &stmt.outputs);
                 }
             }
         }
@@ -437,30 +423,53 @@ impl<'db> FunctionInlinerRewriter<'db> {
         function_id: ConcreteFunctionWithBodyId,
         inputs: &[VariableId],
         outputs: &[VariableId],
-        optional_return_block_id: Option<BlockId>,
     ) -> Maybe<()> {
         let lowered = self.ctx.db.priv_concrete_function_with_body_lowered_flat(function_id)?;
         let root_block_id = lowered.root?;
         let root_block = &lowered.blocks[root_block_id];
+
+        // Create a new block with all the statements that follow
+        // the call statement.
+        let return_block_id = self.block_queue.enqueue_block(FlatBlock {
+            inputs: vec![],
+            statements: self.statement_rewrite_stack.consume(),
+            end: self.block_end.clone(),
+        });
 
         // As the block_ids and variable_ids are per function, we need to rename all
         // the blocks and variables before we enqueue the blocks from the function that
         // we are inlining.
 
         // The input variables need to be renamed to match the inputs to the function call.
-        // The returned variables needs to be renamed to match the outputs from the function call.
         let mut mapper = Mapper {
             ctx: &mut self.ctx,
             lowered: &lowered,
-            renamed_vars: HashMap::<VariableId, VariableId>::from_iter(chain!(
-                izip!(lowered.blocks[root_block_id].inputs.iter().cloned(), inputs.iter().cloned()),
-                izip!(
-                    extract_matches!(&root_block.end, FlatBlockEnd::Return).iter().cloned(),
-                    outputs.iter().cloned()
-                )
+            renamed_vars: HashMap::<VariableId, VariableId>::from_iter(izip!(
+                root_block.inputs.iter().cloned(),
+                inputs.iter().cloned()
             )),
             renamed_blocks: HashMap::new(),
         };
+
+        // Try to avoid using output_remapping as it causes more store_temps to be generated.
+        // TODO(ilya): make var_remapping more efficient and remove the following.
+        let mut output_remapping = VarRemapping::default();
+        for (returned_var_id, output_var_id) in
+            izip!(extract_matches!(&root_block.end, FlatBlockEnd::Return).iter(), outputs.iter())
+        {
+            match mapper.renamed_vars.entry(*returned_var_id) {
+                Entry::Vacant(e) => {
+                    // Use var_id renaming as it results in better code.
+                    e.insert(*output_var_id);
+                }
+                Entry::Occupied(_) => {
+                    // `returned_var_id` was already renamed, fallback to output_remapping:
+                    // (mapper.rename_var(returned_var_id) -> output_var_id).
+                    output_remapping.insert(*output_var_id, mapper.rename_var(returned_var_id));
+                }
+            }
+        }
+        self.block_end = FlatBlockEnd::Fallthrough(return_block_id, output_remapping);
 
         for (block_id, block) in lowered.blocks.iter() {
             if block_id == root_block_id {
@@ -476,7 +485,7 @@ impl<'db> FunctionInlinerRewriter<'db> {
                     FlatBlockEnd::Callsite(mapper.update_remapping(remapping))
                 }
                 FlatBlockEnd::Return(returns) => FlatBlockEnd::Goto(
-                    optional_return_block_id.unwrap(),
+                    return_block_id,
                     VarRemapping {
                         remapping: OrderedHashMap::from_iter(izip!(
                             outputs.iter().cloned(),
@@ -501,6 +510,7 @@ impl<'db> FunctionInlinerRewriter<'db> {
         self.statement_rewrite_stack.push_statments(
             root_block.statements.iter().map(|statement| mapper.rebuild_statement(statement)),
         );
+
         Ok(())
     }
 }

@@ -513,14 +513,32 @@ impl CasmBuilder {
         self.reachable = false;
     }
 
-    /// The state at the last added statement.
+    /// The number of steps at the last added statement.
     pub fn steps(&self) -> usize {
         self.main_state.steps
     }
 
-    /// The state at the last added statement.
+    /// Resets the steps counter.
     pub fn reset_steps(&mut self) {
         self.main_state.steps = 0;
+    }
+
+    /// Create an assert that would always fail.
+    pub fn fail(&mut self) {
+        let cell = CellRef { offset: -1, register: Register::FP };
+        let instruction = self.get_instruction(
+            InstructionBody::AssertEq(AssertEqInstruction {
+                a: cell,
+                b: ResOperand::BinOp(BinOpOperand {
+                    op: Operation::Add,
+                    a: cell,
+                    b: DerefOrImmediate::Immediate(1.into()),
+                }),
+            }),
+            false,
+        );
+        self.statements.push(Statement::Final(instruction));
+        self.reachable = false;
     }
 
     /// Returns `var`s value, with fixed ap if `adjust_ap` is true.
@@ -770,6 +788,10 @@ macro_rules! casm_build_extend {
         $builder.label(std::stringify!($label).to_owned());
         $crate::casm_build_extend!($builder, $($tok)*)
     };
+    ($builder:ident, fail; $($tok:tt)*) => {
+        $builder.fail();
+        $crate::casm_build_extend!($builder, $($tok)*)
+    };
     ($builder:ident, hint $hint_name:ident {
             $($input_name:ident : $input_value:ident),*
         } into {
@@ -797,13 +819,16 @@ macro_rules! casm_build_extend {
         $builder.rescope([$(($new_var, $value_var)),*]);
         $crate::casm_build_extend!($builder, $($tok)*)
     };
-    // Steps tracking section.
-    ($builder:ident, validate steps == $count:expr; $($tok:tt)*) => {
+    ($builder:ident, #{ validate steps == $count:expr; } $($tok:tt)*) => {
         assert_eq!($builder.steps(), $count);
         $crate::casm_build_extend!($builder, $($tok)*)
     };
-    // Steps tracking section.
-    ($builder:ident, reset steps; $($tok:tt)*) => {
+    ($builder:ident, #{ steps = 0; } $($tok:tt)*) => {
+        $builder.reset_steps();
+        $crate::casm_build_extend!($builder, $($tok)*)
+    };
+    ($builder:ident, #{ $counter:ident += steps; steps = 0; } $($tok:tt)*) => {
+        $counter += $builder.steps() as i32;
         $builder.reset_steps();
         $crate::casm_build_extend!($builder, $($tok)*)
     };

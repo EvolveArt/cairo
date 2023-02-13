@@ -450,12 +450,13 @@ pub fn compile_invocation(
     let builder =
         CompiledInvocationBuilder { program_info, invocation, libfunc, idx, refs, environment };
     match libfunc {
-        // TODO(ilya, 10/10/2022): Handle type.
         CoreConcreteLibfunc::Felt(libfunc) => felt::build(libfunc, builder),
         CoreConcreteLibfunc::Bitwise(_) => bitwise::build(builder),
         CoreConcreteLibfunc::Bool(libfunc) => boolean::build(libfunc, builder),
         CoreConcreteLibfunc::Ec(libfunc) => ec::build(libfunc, builder),
         CoreConcreteLibfunc::Uint8(libfunc) => uint::build_u8(libfunc, builder),
+        CoreConcreteLibfunc::Uint16(libfunc) => uint::build_u16(libfunc, builder),
+        CoreConcreteLibfunc::Uint32(libfunc) => uint::build_u32(libfunc, builder),
         CoreConcreteLibfunc::Uint64(libfunc) => uint::build_u64(libfunc, builder),
         CoreConcreteLibfunc::Uint128(libfunc) => uint128::build(libfunc, builder),
         CoreConcreteLibfunc::Gas(libfunc) => gas::build(libfunc, builder),
@@ -477,6 +478,7 @@ pub fn compile_invocation(
         CoreConcreteLibfunc::StarkNet(libfunc) => starknet::build(libfunc, builder),
         CoreConcreteLibfunc::Nullable(libfunc) => nullable::build(libfunc, builder),
         CoreConcreteLibfunc::Debug(libfunc) => debug::build(libfunc, builder),
+        CoreConcreteLibfunc::SnapshotTake(_) => misc::build_identity(builder),
     }
 }
 

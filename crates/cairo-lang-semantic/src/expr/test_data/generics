@@ -54,6 +54,32 @@ foo
 
 //! > ==========================================================================
 
+//! > Test ref self in trait functions.
+
+//! > test_function_name
+test_function_diagnostics
+
+//! > function
+fn foo() {
+    let mut x = 5;
+    x.foo();
+}
+
+//! > module_code
+trait MyTrait<T> {
+    fn foo(ref self: T);
+}
+impl MyImpl of MyTrait::<felt> {
+    fn foo(ref self: felt) {}
+}
+
+//! > function_name
+foo
+
+//! > expected_diagnostics
+
+//! > ==========================================================================
+
 //! > Test generic kind failures
 
 //! > test_function_name
@@ -73,6 +99,11 @@ fn bar<A, const B, impl C: MyTrait::<felt>>(){}
 foo
 
 //! > expected_diagnostics
+error: Trait not found.
+ --> lib.cairo:1:28
+fn bar<A, const B, impl C: MyTrait::<felt>>(){}
+                           ^*****^
+
 error: Wrong number of generic arguments. Expected 3, found: 4
  --> lib.cairo:3:5
     bar::<1,1,1,1>();
@@ -108,6 +139,7 @@ test_function_diagnostics
 //! > function
 fn foo() {
     bar::<MyImpl>();
+    bar::<AnotherImpl>();
 }
 
 //! > module_code
@@ -116,11 +148,58 @@ impl MyImpl of MyTrait::<felt> {}
 fn bar<impl C: MyTrait::<felt>>(){}
 extern fn hoo<impl C: MyTrait::<felt>>() nopanic;
 
+trait AnotherTrait<T> {}
+impl AnotherImpl of AnotherTrait::<felt> {}
+
 //! > function_name
 foo
 
 //! > expected_diagnostics
-error: Extern functions with impl generics are not supported
+error: Extern items with impl generics are not supported
  --> lib.cairo:4:15
 extern fn hoo<impl C: MyTrait::<felt>>() nopanic;
               ^*********************^
+
+error: Supplied impl does not match the required trait
+ --> lib.cairo:10:11
+    bar::<AnotherImpl>();
+          ^*********^
+
+//! > ==========================================================================
+
+//! > Test generic impl params usage
+
+//! > test_function_name
+test_function_diagnostics
+
+//! > function
+fn f(){}
+
+//! > module_code
+fn bar<T, impl GenericImpl: MyTrait::<T>>(x: T) {
+    GenericImpl::foo(x);
+    MyImpl::foo(4);
+    MyTrait::foo(x);
+    x.foo()
+}
+
+trait MyTrait<T> {
+    fn foo(self: T);
+}
+impl MyImpl of MyTrait::<felt> {
+    fn foo(self: felt) {
+    }
+}
+
+trait AnotherTrait<T> {
+    fn foo(self: T);
+}
+impl AnotherImpl of AnotherTrait::<felt> {
+    fn foo(self: felt) {
+    }
+}
+
+//! > function_name
+f
+
+//! > expected_diagnostics

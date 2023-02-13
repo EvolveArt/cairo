@@ -78,6 +78,8 @@ mod HelloStarknet {
     }
 
     mod __external {
+        use starknet_serde::ContractAddressSerde;
+
         fn increase_balance(mut data: Array::<felt>) -> Array::<felt> {
             internal::revoke_ap_tracking();
             match get_gas() {
@@ -99,7 +101,7 @@ mod HelloStarknet {
                         panic(err_data)
                     },
                 };
-            if array_len(ref data) != 0_usize {
+            if !array::ArrayTrait::is_empty(ref data) {
                 // Force the inclusion of `System` in the list of implicits.
                 starknet::use_system_implicit();
 
@@ -134,7 +136,7 @@ mod HelloStarknet {
                 },
             }
             
-            if array_len(ref data) != 0_usize {
+            if !array::ArrayTrait::is_empty(ref data) {
                 // Force the inclusion of `System` in the list of implicits.
                 starknet::use_system_implicit();
 
@@ -156,13 +158,15 @@ mod HelloStarknet {
             let mut arr = array_new();
             // References.
             // Result.
-            serde::Serde::<felt>::serialize(ref arr, res)
+            serde::Serde::<felt>::serialize(ref arr, res);
             arr
         }
         
     }
 
     mod __constructor {
+        use starknet_serde::ContractAddressSerde;
+
         
     }
 }

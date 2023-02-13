@@ -16,7 +16,7 @@ use syntax::node::green::{GreenNode, GreenNodeDetails};
 
 use crate::diagnostic::ParserDiagnosticKind;
 use crate::lexer::{Lexer, LexerTerminal};
-use crate::operators::{get_binary_operator_precedence, get_unary_operator_precedence};
+use crate::operators::{get_post_operator_precedence, get_unary_operator_precedence};
 use crate::recovery::is_of_kind;
 use crate::ParserDiagnostic;
 
@@ -547,10 +547,15 @@ impl<'a> Parser<'a> {
             Some(match self.peek().kind {
                 SyntaxKind::TerminalDot => self.take::<TerminalDot>().into(),
                 SyntaxKind::TerminalMul => self.take::<TerminalMul>().into(),
+                SyntaxKind::TerminalMulEq => self.take::<TerminalMulEq>().into(),
                 SyntaxKind::TerminalDiv => self.take::<TerminalDiv>().into(),
+                SyntaxKind::TerminalDivEq => self.take::<TerminalDivEq>().into(),
                 SyntaxKind::TerminalMod => self.take::<TerminalMod>().into(),
+                SyntaxKind::TerminalModEq => self.take::<TerminalModEq>().into(),
                 SyntaxKind::TerminalPlus => self.take::<TerminalPlus>().into(),
+                SyntaxKind::TerminalPlusEq => self.take::<TerminalPlusEq>().into(),
                 SyntaxKind::TerminalMinus => self.take::<TerminalMinus>().into(),
+                SyntaxKind::TerminalMinusEq => self.take::<TerminalMinusEq>().into(),
                 SyntaxKind::TerminalEq => self.take::<TerminalEq>().into(),
                 SyntaxKind::TerminalEqEq => self.take::<TerminalEqEq>().into(),
                 SyntaxKind::TerminalNeq => self.take::<TerminalNeq>().into(),
@@ -568,6 +573,7 @@ impl<'a> Parser<'a> {
     /// Assumes the current token is a unary operator, and returns a GreenId of the operator.
     fn parse_unary_operator(&mut self) -> UnaryOperatorGreen {
         match self.peek().kind {
+            SyntaxKind::TerminalAt => self.take::<TerminalAt>().into(),
             SyntaxKind::TerminalNot => self.take::<TerminalNot>().into(),
             SyntaxKind::TerminalMinus => self.take::<TerminalMinus>().into(),
             _ => unreachable!(),
@@ -593,20 +599,18 @@ impl<'a> Parser<'a> {
             self.try_parse_atom(lbrace_allowed)?
         };
 
-        // ? operator has the highest precedence, so we now find all the usages after.
-        while self.peek().kind == SyntaxKind::TerminalQuestionMark {
-            expr = ExprErrorPropagate::new_green(
-                self.db,
-                expr,
-                self.parse_token::<TerminalQuestionMark>(),
-            )
-            .into();
-        }
-        while let Some(precedence) = get_binary_operator_precedence(self.peek().kind) {
+        while let Some(precedence) = get_post_operator_precedence(self.peek().kind) {
             if precedence >= parent_precedence {
                 return Some(expr);
             }
-            if let Some(op) = self.try_parse_binary_operator() {
+            if self.peek().kind == SyntaxKind::TerminalQuestionMark {
+                expr = ExprErrorPropagate::new_green(
+                    self.db,
+                    expr,
+                    self.take::<TerminalQuestionMark>(),
+                )
+                .into();
+            } else if let Some(op) = self.try_parse_binary_operator() {
                 let rhs = self.parse_expr_limited(precedence, lbrace_allowed);
                 expr = ExprBinary::new_green(self.db, expr, op, rhs).into();
             } else {
@@ -679,6 +683,15 @@ impl<'a> Parser<'a> {
     fn try_parse_type_expr(&mut self) -> Option<ExprGreen> {
         // TODO(yuval): support paths starting with "::".
         match self.peek().kind {
+            SyntaxKind::TerminalAt => {
+                let op = self.parse_unary_operator();
+                let expr = self.try_parse_type_expr().unwrap_or_else(|| {
+                    self.create_and_report_missing::<Expr>(
+                        ParserDiagnosticKind::MissingTypeExpression,
+                    )
+                });
+                Some(ExprUnary::new_green(self.db, op, expr).into())
+            }
             SyntaxKind::TerminalIdentifier => Some(self.parse_path().into()),
             SyntaxKind::TerminalLParen => Some(self.expect_parenthesized_expr()),
             _ => {
