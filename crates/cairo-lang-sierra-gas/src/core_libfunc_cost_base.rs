@@ -4,9 +4,10 @@ use cairo_lang_sierra::extensions::boxing::BoxConcreteLibfunc;
 use cairo_lang_sierra::extensions::builtin_cost::{
     BuiltinCostConcreteLibfunc, BuiltinCostGetGasLibfunc, CostTokenType,
 };
+use cairo_lang_sierra::extensions::casts::CastConcreteLibfunc;
 use cairo_lang_sierra::extensions::core::CoreConcreteLibfunc::{
-    self, ApTracking, Array, Bitwise, Bool, Box, BranchAlign, BuiltinCost, DictFeltTo, Drop, Dup,
-    Ec, Enum, Felt, FunctionCall, Gas, Mem, Pedersen, Struct, Uint128, Uint16, Uint32, Uint64,
+    self, ApTracking, Array, Bitwise, Bool, Box, BranchAlign, BuiltinCost, Cast, DictFeltTo, Drop,
+    Dup, Ec, Enum, Felt, FunctionCall, Gas, Mem, Pedersen, Struct, Uint128, Uint16, Uint32, Uint64,
     Uint8, UnconditionalJump, UnwrapNonZero,
 };
 use cairo_lang_sierra::extensions::dict_felt_to::DictFeltToConcreteLibfunc;
@@ -46,12 +47,12 @@ impl ConstCost {
 // The costs of the dict_squash libfunc, divided into different parts.
 /// The cost per each unique key in the dictionary.
 pub const DICT_SQUASH_UNIQUE_KEY_COST: i32 =
-    ConstCost { steps: 64, holes: 0, range_checks: 6 }.cost();
+    ConstCost { steps: 62, holes: 0, range_checks: 6 }.cost();
 /// The cost per each access to a key after the first access.
 pub const DICT_SQUASH_REPEATED_ACCESS_COST: i32 =
     ConstCost { steps: 12, holes: 0, range_checks: 1 }.cost();
 /// The cost not dependent on the number of keys and access.
-pub const DICT_SQUASH_FIXED_COST: i32 = ConstCost { steps: 89, holes: 0, range_checks: 3 }.cost();
+pub const DICT_SQUASH_FIXED_COST: i32 = ConstCost { steps: 86, holes: 0, range_checks: 3 }.cost();
 /// The cost to charge per each read/write access. `DICT_SQUASH_UNIQUE_KEY_COST` is refunded for
 /// each repeated access in dict_squash.
 pub const DICT_SQUASH_ACCESS_COST: i32 =
@@ -170,6 +171,9 @@ pub fn core_libfunc_postcost<Ops: CostOperations, InfoProvider: InvocationCostIn
         Bool(BoolConcreteLibfunc::Xor(_)) => vec![ops.steps(1)],
         Bool(BoolConcreteLibfunc::Or(_)) => vec![ops.steps(2)],
         Bool(BoolConcreteLibfunc::Equal(_)) => vec![ops.steps(2), ops.steps(3)],
+        Cast(libfunc) => match libfunc {
+            CastConcreteLibfunc::Upcast(_) => vec![ops.steps(0)],
+        },
         Ec(libfunc) => match libfunc {
             EcConcreteLibfunc::IsZero(_) => vec![ops.steps(1), ops.steps(1)],
             EcConcreteLibfunc::Neg(_) => vec![ops.steps(0)],
@@ -571,7 +575,6 @@ fn u128_libfunc_cost<Ops: CostOperations>(
     ops: &Ops,
     libfunc: &Uint128Concrete,
 ) -> Vec<Ops::CostType> {
-    // TODO(orizi): When sierra_to_casm actually supports integers - fix costs.
     match libfunc {
         Uint128Concrete::Operation(libfunc) => match libfunc.operator {
             IntOperator::OverflowingAdd | IntOperator::OverflowingSub => {

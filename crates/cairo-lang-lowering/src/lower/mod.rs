@@ -13,6 +13,8 @@ use semantic::corelib::{
     jump_nz_nonzero_variant, jump_nz_zero_variant, unit_ty,
 };
 use semantic::items::enm::SemanticEnumEx;
+use semantic::items::structure::SemanticStructEx;
+use semantic::types::{peel_snapshots, wrap_in_snapshots};
 use semantic::{ConcreteTypeId, ExprPropagateError, TypeLongId};
 
 use self::context::{
@@ -190,11 +192,8 @@ pub fn lower_statement(
             let lowered_expr = lower_expr(ctx, scope, *expr)?;
             // The LoweredExpr must be evaluated now to push/bring back variables in case it is
             // LoweredExpr::ExternEnum.
-            match lowered_expr {
-                LoweredExpr::ExternEnum(x) => {
-                    x.var(ctx, scope)?;
-                }
-                LoweredExpr::AtVariable(_) | LoweredExpr::Tuple { .. } => {}
+            if let LoweredExpr::ExternEnum(x) = lowered_expr {
+                x.var(ctx, scope)?;
             }
         }
         semantic::Statement::Let(semantic::StatementLet { pattern, expr, stable_ptr: _ }) => {
@@ -242,7 +241,10 @@ fn lower_single_pattern(
             ctx.semantic_defs.insert(sem_var.id(), sem_var);
         }
         semantic::Pattern::Struct(structure) => {
-            let members = ctx.db.struct_members(structure.id).map_err(LoweringFlowError::Failed)?;
+            let members = ctx
+                .db
+                .concrete_struct_members(structure.concrete_struct_id)
+                .map_err(LoweringFlowError::Failed)?;
             let mut required_members = UnorderedHashMap::from_iter(
                 structure.field_patterns.iter().map(|(member, pattern)| (member.id, pattern)),
             );
@@ -251,7 +253,7 @@ fn lower_single_pattern(
                 var_reqs: members
                     .iter()
                     .map(|(_, member)| VarRequest {
-                        ty: member.ty,
+                        ty: wrap_in_snapshots(ctx.db.upcast(), member.ty, structure.n_snapshots),
                         location: ctx.get_location(
                             required_members
                                 .get(&member.id)
@@ -314,7 +316,7 @@ fn lower_expr(
         semantic::Expr::If(expr) => lower_expr_if(ctx, scope, expr),
         semantic::Expr::Var(expr) => {
             log::trace!("Lowering a variable: {:?}", expr.debug(&ctx.expr_formatter));
-            Ok(LoweredExpr::AtVariable(scope.get_semantic(expr.var)))
+            Ok(LoweredExpr::SemanticVar(expr.var))
         }
         semantic::Expr::Literal(expr) => lower_expr_literal(ctx, expr, scope),
         semantic::Expr::MemberAccess(expr) => lower_expr_member_access(ctx, expr, scope),
@@ -377,9 +379,8 @@ fn lower_expr_snapshot(
 ) -> LoweringResult<LoweredExpr> {
     log::trace!("Lowering a snapshot: {:?}", expr.debug(&ctx.expr_formatter));
     let location = ctx.get_location(expr.stable_ptr.untyped());
-    let input = lower_expr(ctx, scope, expr.inner)?.var(ctx, scope)?;
-
-    Ok(LoweredExpr::AtVariable(generators::Snapshot { input, location }.add(ctx, scope)))
+    let expr = Box::new(lower_expr(ctx, scope, expr.inner)?);
+    Ok(LoweredExpr::Snapshot { expr, location })
 }
 
 /// Lowers an expression of type [semantic::ExprFunctionCall].
@@ -508,7 +509,8 @@ fn lower_expr_match(
         return lower_optimized_extern_match(ctx, scope, extern_enum, &expr.arms);
     }
 
-    let (concrete_enum_id, concrete_variants) = extract_concrete_enum(ctx, expr)?;
+    let ExtractedEnumDetails { concrete_enum_id, concrete_variants, n_snapshots } =
+        extract_concrete_enum(ctx, expr)?;
     let expr_var = lowered_expr.var(ctx, scope)?;
 
     // Merge arm blocks.
@@ -534,7 +536,10 @@ fn lower_expr_match(
                 ctx.get_location(enum_pattern.inner_pattern.stable_ptr().untyped());
             let variant_expr = LoweredExpr::AtVariable(subscope.add_input(
                 ctx,
-                VarRequest { ty: concrete_variant.ty, location: pattern_location },
+                VarRequest {
+                    ty: wrap_in_snapshots(ctx.db.upcast(), concrete_variant.ty, n_snapshots),
+                    location: pattern_location,
+                },
             ));
 
             match lower_single_pattern(
@@ -702,18 +707,24 @@ fn lower_expr_match_felt(
     merged.expr
 }
 
+/// Information about the enum of a match statement. See [extract_concrete_enum].
+struct ExtractedEnumDetails {
+    concrete_enum_id: semantic::ConcreteEnumId,
+    concrete_variants: Vec<semantic::ConcreteVariant>,
+    n_snapshots: usize,
+}
+
 /// Extracts concrete enum and variants from a match expression. Assumes it is indeed a concrete
 /// enum.
 fn extract_concrete_enum(
     ctx: &mut LoweringContext<'_>,
     expr: &semantic::ExprMatch,
-) -> Result<(semantic::ConcreteEnumId, Vec<semantic::ConcreteVariant>), LoweringFlowError> {
-    let concrete_ty = try_extract_matches!(
-        ctx.db.lookup_intern_type(ctx.function_body.exprs[expr.matched_expr].ty()),
-        TypeLongId::Concrete
-    )
-    .to_maybe()
-    .map_err(LoweringFlowError::Failed)?;
+) -> Result<ExtractedEnumDetails, LoweringFlowError> {
+    let ty = ctx.function_body.exprs[expr.matched_expr].ty();
+    let (n_snapshots, long_ty) = peel_snapshots(ctx.db.upcast(), ty);
+    let concrete_ty = try_extract_matches!(long_ty, TypeLongId::Concrete)
+        .to_maybe()
+        .map_err(LoweringFlowError::Failed)?;
     let concrete_enum_id = try_extract_matches!(concrete_ty, ConcreteTypeId::Enum)
         .to_maybe()
         .map_err(LoweringFlowError::Failed)?;
@@ -736,7 +747,7 @@ fn extract_concrete_enum(
             ctx.diagnostics.report(expr.stable_ptr.untyped(), UnsupportedMatch),
         ));
     }
-    Ok((concrete_enum_id, concrete_variants))
+    Ok(ExtractedEnumDetails { concrete_enum_id, concrete_variants, n_snapshots })
 }
 
 /// Lowers a sequence of expressions and return them all. If the flow ended in the middle,
@@ -781,7 +792,10 @@ fn lower_expr_member_access(
 ) -> LoweringResult<LoweredExpr> {
     log::trace!("Lowering a member-access expression: {:?}", expr.debug(&ctx.expr_formatter));
     let location = ctx.get_location(expr.stable_ptr.untyped());
-    let members = ctx.db.struct_members(expr.struct_id).map_err(LoweringFlowError::Failed)?;
+    let members = ctx
+        .db
+        .concrete_struct_members(expr.concrete_struct_id)
+        .map_err(LoweringFlowError::Failed)?;
     let member_idx = members
         .iter()
         .position(|(_, member)| member.id == expr.member)
@@ -790,7 +804,10 @@ fn lower_expr_member_access(
     Ok(LoweredExpr::AtVariable(
         generators::StructMemberAccess {
             input: lower_expr(ctx, scope, expr.expr)?.var(ctx, scope)?,
-            member_tys: members.into_iter().map(|(_, member)| member.ty).collect(),
+            member_tys: members
+                .into_iter()
+                .map(|(_, member)| wrap_in_snapshots(ctx.db.upcast(), member.ty, expr.n_snapshots))
+                .collect(),
             member_idx,
             location,
         }
@@ -806,7 +823,10 @@ fn lower_expr_struct_ctor(
 ) -> LoweringResult<LoweredExpr> {
     log::trace!("Lowering a struct c'tor expression: {:?}", expr.debug(&ctx.expr_formatter));
     let location = ctx.get_location(expr.stable_ptr.untyped());
-    let members = ctx.db.struct_members(expr.struct_id).map_err(LoweringFlowError::Failed)?;
+    let members = ctx
+        .db
+        .concrete_struct_members(expr.concrete_struct_id)
+        .map_err(LoweringFlowError::Failed)?;
     let member_expr = UnorderedHashMap::from_iter(expr.members.iter().cloned());
     Ok(LoweredExpr::AtVariable(
         generators::StructConstruct {

@@ -12,9 +12,11 @@ cairo_lang_test_utils::test_file_test!(
     "e2e_test_data/libfuncs",
     {
         array: "array",
+        snapshot: "snapshot",
         bitwise: "bitwise",
         box_: "box",
         builtin_costs: "builtin_costs",
+        casts: "casts",
         dict_felt_to: "dict_felt_to",
         ec: "ec",
         get_gas_all: "get_gas_all",
@@ -25,6 +27,8 @@ cairo_lang_test_utils::test_file_test!(
         u64: "u64",
         u128: "u128",
         bool: "bool",
+        enum_: "enum",
+        span: "span",
     },
     run_small_e2e_test
 );

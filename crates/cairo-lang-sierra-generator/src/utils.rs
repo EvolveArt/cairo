@@ -1,8 +1,11 @@
+use cairo_lang_diagnostics::Maybe;
 use cairo_lang_sierra::extensions::core::CoreLibfunc;
 use cairo_lang_sierra::extensions::lib_func::LibfuncSignature;
-use cairo_lang_sierra::extensions::GenericLibfuncEx;
+use cairo_lang_sierra::extensions::snapshot::SnapshotType;
+use cairo_lang_sierra::extensions::{GenericLibfuncEx, NamedType};
 use cairo_lang_sierra::ids::{ConcreteLibfuncId, GenericLibfuncId};
 use cairo_lang_sierra::program;
+use cairo_lang_utils::extract_matches;
 use itertools::Itertools;
 use num_bigint::BigInt;
 use semantic::corelib::get_const_libfunc_name_by_type;
@@ -85,8 +88,19 @@ pub fn struct_construct_libfunc_id(
 pub fn struct_deconstruct_libfunc_id(
     db: &dyn SierraGenGroup,
     ty: cairo_lang_sierra::ids::ConcreteTypeId,
-) -> cairo_lang_sierra::ids::ConcreteLibfuncId {
-    get_libfunc_id_with_generic_arg(db, "struct_deconstruct", ty)
+) -> Maybe<cairo_lang_sierra::ids::ConcreteLibfuncId> {
+    let long_id = &db.get_type_info(ty.clone())?.long_id;
+    let is_snapshot = long_id.generic_id == SnapshotType::id();
+    Ok(if is_snapshot {
+        let concrete_enum_type = extract_matches!(
+            &long_id.generic_args[0],
+            cairo_lang_sierra::program::GenericArg::Type
+        )
+        .clone();
+        get_libfunc_id_with_generic_arg(db, "struct_snapshot_deconstruct", concrete_enum_type)
+    } else {
+        get_libfunc_id_with_generic_arg(db, "struct_deconstruct", ty)
+    })
 }
 
 pub fn enum_init_libfunc_id(
@@ -100,6 +114,17 @@ pub fn enum_init_libfunc_id(
             cairo_lang_sierra::program::GenericArg::Type(ty),
             cairo_lang_sierra::program::GenericArg::Value(variant_idx.into()),
         ],
+    })
+}
+
+/// Returns the [cairo_lang_sierra::program::ConcreteLibfuncLongId] associated with `snapshot_take`.
+pub fn snapshot_take_libfunc_id(
+    db: &dyn SierraGenGroup,
+    ty: cairo_lang_sierra::ids::ConcreteTypeId,
+) -> cairo_lang_sierra::ids::ConcreteLibfuncId {
+    db.intern_concrete_lib_func(cairo_lang_sierra::program::ConcreteLibfuncLongId {
+        generic_id: cairo_lang_sierra::ids::GenericLibfuncId::from_string("snapshot_take"),
+        generic_args: vec![cairo_lang_sierra::program::GenericArg::Type(ty)],
     })
 }
 
@@ -140,8 +165,19 @@ pub fn const_libfunc_id_by_type(
 pub fn match_enum_libfunc_id(
     db: &dyn SierraGenGroup,
     ty: cairo_lang_sierra::ids::ConcreteTypeId,
-) -> cairo_lang_sierra::ids::ConcreteLibfuncId {
-    get_libfunc_id_with_generic_arg(db, "enum_match", ty)
+) -> Maybe<cairo_lang_sierra::ids::ConcreteLibfuncId> {
+    let long_id = &db.get_type_info(ty.clone())?.long_id;
+    let is_snapshot = long_id.generic_id == SnapshotType::id();
+    Ok(if is_snapshot {
+        let concrete_enum_type = extract_matches!(
+            &long_id.generic_args[0],
+            cairo_lang_sierra::program::GenericArg::Type
+        )
+        .clone();
+        get_libfunc_id_with_generic_arg(db, "enum_snapshot_match", concrete_enum_type)
+    } else {
+        get_libfunc_id_with_generic_arg(db, "enum_match", ty)
+    })
 }
 
 pub fn drop_libfunc_id(
@@ -290,10 +326,27 @@ fn collect_outputs(
     blocks: &[lowering::BlockId],
 ) -> Vec<id_arena::Id<lowering::Variable>> {
     for block in blocks {
-        if let lowering::FlatBlockEnd::Callsite(remapping) = &lowered_function.blocks[*block].end {
+        if let Some(value) = block_outputs(lowered_function, block) {
             // It is guaranteed by lowering phase that all of the variables mapped to are the same.
-            return remapping.keys().copied().collect();
+            return value;
         }
     }
     vec![]
+}
+
+/// Collects output variables of a block when it reaches a Callsite.
+/// Returns None if Callsite is not reached.
+fn block_outputs(
+    lowered_function: &lowering::FlatLowered,
+    block: &lowering::BlockId,
+) -> Option<Vec<id_arena::Id<lowering::Variable>>> {
+    match &lowered_function.blocks[*block].end {
+        lowering::FlatBlockEnd::Callsite(remapping) => Some(remapping.keys().copied().collect()),
+        lowering::FlatBlockEnd::Fallthrough(block_id, _) => {
+            block_outputs(lowered_function, block_id)
+        }
+        lowering::FlatBlockEnd::Return(_)
+        | lowering::FlatBlockEnd::Unreachable
+        | lowering::FlatBlockEnd::Goto(_, _) => None,
+    }
 }
