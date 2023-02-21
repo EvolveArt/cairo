@@ -1,7 +1,9 @@
-use zeroable::Zeroable;
+use box::Box;
+use option::OptionTrait;
+use array::Span;
 use traits::Into;
 use traits::TryInto;
-use option::OptionTrait;
+use zeroable::Zeroable;
 
 // Re-imports
 // StorageAccess
@@ -28,7 +30,30 @@ use contract_address::contract_address_to_felt;
 use contract_address::contract_address_try_from_felt;
 use contract_address::ContractAddressZeroable;
 
+
 extern type System;
+
+#[derive(Copy, Drop)]
+struct TxInfo {
+    // The version of the transaction. It is fixed (currently, 1) in the OS, and should be
+    // signed by the account contract.
+    // This field allows invalidating old transactions, whenever the meaning of the other
+    // transaction fields is changed (in the OS).
+    version: felt,
+    // The account contract from which this transaction originates.
+    account_contract_address: ContractAddress,
+    // The max_fee field of the transaction.
+    max_fee: u128,
+    // The signature of the transaction.
+    signature: Span::<felt>,
+    // The hash of the transaction.
+    transaction_hash: felt,
+    // The identifier of the chain.
+    // This field can be used to prevent replay of testnet transactions on mainnet.
+    chain_id: felt,
+    // The transaction's nonce.
+    nonce: felt,
+}
 
 // An Helper function to force the inclusion of `System` in the list of implicits.
 fn use_system_implicit() implicits(System) {}
@@ -73,6 +98,14 @@ extern fn get_block_number_syscall() -> SyscallResult::<u64> implicits(GasBuilti
 
 fn get_block_number() -> u64 {
     get_block_number_syscall().unwrap_syscall()
+}
+
+extern fn get_tx_info_syscall() -> SyscallResult::<Box::<TxInfo>> implicits(
+    GasBuiltin, System
+) nopanic;
+
+fn get_tx_info() -> Box::<TxInfo> {
+    get_tx_info_syscall().unwrap_syscall()
 }
 
 extern fn get_block_timestamp_syscall() -> SyscallResult::<u64> implicits(

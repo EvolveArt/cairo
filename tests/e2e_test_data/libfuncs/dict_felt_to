@@ -2,8 +2,8 @@
 
 //! > test_comments
 
-//! > test_function_name
-run_small_e2e_test
+//! > test_runner_name
+SmallE2ETestRunner
 
 //! > cairo
 fn foo() -> DictFeltTo::<felt> {
@@ -61,8 +61,8 @@ test::foo@0([0]: DictManager) -> (DictManager, DictFeltTo<felt>);
 
 //! > test_comments
 
-//! > test_function_name
-run_small_e2e_test
+//! > test_runner_name
+SmallE2ETestRunner
 
 //! > cairo
 fn foo(ref dict: DictFeltTo::<felt>, key: felt, value: felt) {
@@ -109,8 +109,8 @@ test::foo@0([0]: DictFeltTo<felt>, [1]: felt, [2]: felt) -> (DictFeltTo<felt>, U
 
 //! > test_comments
 
-//! > test_function_name
-run_small_e2e_test
+//! > test_runner_name
+SmallE2ETestRunner
 
 //! > cairo
 fn foo(ref dict: DictFeltTo::<felt>, key: felt) -> felt {
@@ -154,8 +154,8 @@ test::foo@0([0]: DictFeltTo<felt>, [1]: felt) -> (DictFeltTo<felt>, felt);
 
 //! > test_comments
 
-//! > test_function_name
-run_small_e2e_test
+//! > test_runner_name
+SmallE2ETestRunner
 
 //! > cairo
 fn foo(dict: DictFeltTo::<felt>) -> SquashedDictFeltTo::<felt> {
