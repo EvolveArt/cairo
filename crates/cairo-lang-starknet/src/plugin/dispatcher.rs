@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use cairo_lang_defs::plugin::{
     DynGeneratedFileAuxData, PluginDiagnostic, PluginGeneratedFile, PluginResult,
 };
-use cairo_lang_semantic::patcher::{ModifiedNode, PatchBuilder, RewriteNode};
+use cairo_lang_semantic::patcher::{PatchBuilder, RewriteNode};
 use cairo_lang_semantic::plugin::DynPluginAuxData;
 use cairo_lang_syntax::node::ast::{self, MaybeTraitBody, OptionReturnTypeClause};
 use cairo_lang_syntax::node::db::SyntaxGroup;
@@ -15,6 +15,7 @@ use super::aux_data::StarkNetABIAuxData;
 use super::consts::EVENT_ATTR;
 use super::utils::is_ref_param;
 use super::ABI_ATTR;
+use crate::contract::starknet_keccak;
 
 /// If the trait is annotated with ABI_ATTR, generate the relevant dispatcher logic.
 pub fn handle_trait(db: &dyn SyntaxGroup, trait_ast: ast::ItemTrait) -> PluginResult {
@@ -37,7 +38,9 @@ pub fn handle_trait(db: &dyn SyntaxGroup, trait_ast: ast::ItemTrait) -> PluginRe
     };
 
     let mut diagnostics = vec![];
+    let mut function_signatures = vec![];
     let mut functions = vec![];
+    let dispatcher_name = format!("{}Dispatcher", trait_ast.name(db).text(db));
     for item_ast in body.items(db).elements(db) {
         match item_ast {
             ast::TraitItem::Function(func) => {
@@ -71,7 +74,7 @@ pub fn handle_trait(db: &dyn SyntaxGroup, trait_ast: ast::ItemTrait) -> PluginRe
                         ),
                         HashMap::from([(
                             "arg_name".to_string(),
-                            RewriteNode::Trimmed(param.name(db).as_syntax_node()),
+                            RewriteNode::new_trimmed(param.name(db).as_syntax_node()),
                         )]),
                     ));
                 }
@@ -89,42 +92,60 @@ pub fn handle_trait(db: &dyn SyntaxGroup, trait_ast: ast::ItemTrait) -> PluginRe
                         let type_name = ret_type_ast.as_syntax_node().get_text(db);
                         format!(
                             "
-        serde::Serde::<{type_name}>::deserialize(ref ret_data).expect(
-            'Returned data too short')"
+        option::OptionTrait::expect(
+            serde::Serde::<{type_name}>::deserialize(ref ret_data),
+            'Returned data too short',
+        )"
                         )
                     }
                 };
 
+                let entry_point_selector = RewriteNode::Text(format!(
+                    "0x{:x}",
+                    starknet_keccak(declaration.name(db).text(db).as_bytes())
+                ));
                 let mut func_declaration = RewriteNode::from_ast(&declaration);
                 func_declaration
                     .modify_child(db, ast::FunctionDeclaration::INDEX_SIGNATURE)
                     .modify_child(db, ast::FunctionSignature::INDEX_PARAMETERS)
                     .modify(db)
                     .children
+                    .as_mut()
+                    .unwrap()
                     .splice(
                         0..0,
                         [
-                            RewriteNode::Text("contract_address: ContractAddress".to_string()),
+                            RewriteNode::Text(format!("self: {dispatcher_name}")),
                             RewriteNode::Text(", ".to_string()),
                         ],
                     );
-
+                function_signatures.push(RewriteNode::interpolate_patched(
+                    "$func_decl$;",
+                    HashMap::from([("func_decl".to_string(), func_declaration.clone())]),
+                ));
                 functions.push(RewriteNode::interpolate_patched(
                     "$func_decl$ {
-        let mut calldata = array_new();
+        let entry_point_selector = $entry_point_selector$;
+        let mut calldata = array::ArrayTrait::new();
 $serialization_code$
-        let mut ret_data = starknet::call_contract_syscall(
-            contract_address,
-            calldata,
-        ).unwrap_syscall();
+        let mut ret_data = array::ArrayTrait::span(
+            @starknet::SyscallResultTrait::unwrap_syscall(
+                starknet::call_contract_syscall(
+                    self.contract_address,
+                    entry_point_selector,
+                    calldata,
+                )
+            )
+        );
 $deserialization_code$
     }
 ",
                     HashMap::from([
                         ("func_decl".to_string(), func_declaration),
+                        ("entry_point_selector".to_string(), entry_point_selector),
                         (
                             "serialization_code".to_string(),
-                            RewriteNode::Modified(ModifiedNode { children: serialization_code }),
+                            RewriteNode::new_modified(serialization_code),
                         ),
                         ("deserialization_code".to_string(), RewriteNode::Text(ret_decode)),
                     ]),
@@ -134,23 +155,25 @@ $deserialization_code$
     }
 
     let mut builder = PatchBuilder::new(db);
-    let dispatcher_name = format!("{}Dispatcher", trait_ast.name(db).text(db));
     builder.add_modified(RewriteNode::interpolate_patched(
         &formatdoc!(
-            "mod {dispatcher_name} {{
-                use super;
-                use starknet::SyscallResultTrait;
-                use starknet::SyscallResultTraitImpl;
-                use option::OptionTrait;
-                use option::OptionTraitImpl;
+            "#[derive(Copy, Drop)]
+            struct {dispatcher_name} {{
+                contract_address: starknet::ContractAddress,
+            }}
 
+            trait {dispatcher_name}Trait {{
+            $signatures$
+            }}
+
+            impl {dispatcher_name}Impl of {dispatcher_name}Trait {{
             $body$
             }}",
         ),
-        HashMap::from([(
-            "body".to_string(),
-            RewriteNode::Modified(ModifiedNode { children: functions }),
-        )]),
+        HashMap::from([
+            ("signatures".to_string(), RewriteNode::new_modified(function_signatures)),
+            ("body".to_string(), RewriteNode::new_modified(functions)),
+        ]),
     ));
     PluginResult {
         code: Some(PluginGeneratedFile {

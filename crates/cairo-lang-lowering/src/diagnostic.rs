@@ -59,7 +59,13 @@ impl DiagnosticEntry for LoweringDiagnostic {
                                                          require one arm per variant, in the \
                                                          order of variant definition."
                 .into(),
-            LoweringDiagnosticKind::UnsupportedMatchArm => "Unsupported match arm.".into(),
+            LoweringDiagnosticKind::UnsupportedMatchArmNotAVariant => {
+                "Unsupported match arm - not a variant.".into()
+            }
+            LoweringDiagnosticKind::UnsupportedMatchArmOutOfOrder => {
+                "Unsupported match arm - variants must be the same order as enum declaration."
+                    .into()
+            }
             LoweringDiagnosticKind::CannotInlineFunctionThatMightCallItself => {
                 "Cannot inline a function that might call itself.".into()
             }
@@ -71,11 +77,6 @@ impl DiagnosticEntry for LoweringDiagnostic {
             }
             LoweringDiagnosticKind::InlineWithoutArgumentNotSupported => {
                 "`inline` without arguments is not supported.".into()
-            }
-            LoweringDiagnosticKind::InliningFunctionWithUnreachableEndNotSupported => {
-                "Inlining of functions where the end of the root block is unreachable is not \
-                 supported."
-                    .into()
             }
         }
     }
@@ -105,10 +106,10 @@ pub enum LoweringDiagnosticKind {
     VariableNotDropped,
     DesnappingANonCopyableType,
     UnsupportedMatch,
-    UnsupportedMatchArm,
+    UnsupportedMatchArmNotAVariant,
+    UnsupportedMatchArmOutOfOrder,
     CannotInlineFunctionThatMightCallItself,
     UnsupportedInlineArguments,
     RedundantInlineAttribute,
-    InliningFunctionWithUnreachableEndNotSupported,
     InlineWithoutArgumentNotSupported,
 }

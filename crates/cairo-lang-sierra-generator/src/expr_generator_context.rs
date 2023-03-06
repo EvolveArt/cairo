@@ -47,7 +47,7 @@ impl<'a> ExprGeneratorContext<'a> {
 
     /// Allocates a new Sierra variable.
     pub fn allocate_sierra_variable(&mut self) -> cairo_lang_sierra::ids::VarId {
-        cairo_lang_sierra::ids::VarId::from_usize(self.var_id_allocator.allocate())
+        cairo_lang_sierra::ids::VarId::new(self.var_id_allocator.allocate() as u64)
     }
 
     /// Returns the SierraGenGroup salsa database.
@@ -69,23 +69,6 @@ impl<'a> ExprGeneratorContext<'a> {
         let sierra_var = self.allocate_sierra_variable();
         self.variables.insert(var, sierra_var.clone());
         sierra_var
-    }
-
-    /// Maps a lowering variable to the given Sierra variable.
-    /// I.e., every instance of `lowering_var_id` is replaced by lowering_var_id.
-    ///
-    /// This can be used to avoid generating `rename` invocations.
-    pub fn add_variable_mapping(
-        &mut self,
-        lowering_var_id: lowering::VariableId,
-        sierra_var_id: cairo_lang_sierra::ids::VarId,
-    ) {
-        assert!(
-            self.variables
-                .insert(SierraGenVar::LoweringVar(lowering_var_id), sierra_var_id)
-                .is_none(),
-            "Conflicting variable mapping for {lowering_var_id:?}"
-        );
     }
 
     /// Same as [Self::get_sierra_variable] except that it operates of a list of variables.
@@ -118,13 +101,6 @@ impl<'a> ExprGeneratorContext<'a> {
         }
     }
 
-    /// Returns true if the block `block_id` was assigned a label.
-    ///
-    /// Blocks that are not reachable through `FlatBlockEnd::Goto` are not assigned a label.
-    pub fn block_has_label(&self, block_id: &BlockId) -> bool {
-        self.block_labels.get(block_id).is_some()
-    }
-
     /// Returns the [cairo_lang_sierra::ids::ConcreteTypeId] associated with
     /// [lowering::VariableId].
     pub fn get_variable_sierra_type(
@@ -148,6 +124,7 @@ impl<'a> ExprGeneratorContext<'a> {
 
     /// Returns the block ([lowering::FlatBlock]) associated with
     /// [lowering::BlockId].
+    /// Assumes `block_id` exists in `self.lowered.blocks`.
     pub fn get_lowered_block(&self, block_id: lowering::BlockId) -> &'a lowering::FlatBlock {
         &self.lowered.blocks[block_id]
     }
