@@ -1,5 +1,5 @@
 use cairo_lang_debug::DebugWithDb;
-use cairo_lang_defs::diagnostic_utils::StableLocation;
+use cairo_lang_defs::diagnostic_utils::StableLocationOption;
 use cairo_lang_defs::ids::FunctionWithBodyId;
 use cairo_lang_diagnostics::Maybe;
 use cairo_lang_semantic as semantic;
@@ -215,6 +215,11 @@ pub fn lower_statement(
             let ret_var = lower_expr(ctx, scope, *expr)?.var(ctx, scope)?;
             return Err(LoweringFlowError::Return(ret_var, ctx.get_location(stable_ptr.untyped())));
         }
+        semantic::Statement::Break(_) => {
+            return Err(LoweringFlowError::Failed(
+                ctx.diagnostics.report(stmt.stable_ptr().untyped(), LoopsUnsupported),
+            ));
+        }
     }
     Ok(())
 }
@@ -329,6 +334,9 @@ fn lower_expr(
         semantic::Expr::FunctionCall(expr) => lower_expr_function_call(ctx, expr, scope),
         semantic::Expr::Match(expr) => lower_expr_match(ctx, expr, scope),
         semantic::Expr::If(expr) => lower_expr_if(ctx, scope, expr),
+        semantic::Expr::Loop(expr) => Err(LoweringFlowError::Failed(
+            ctx.diagnostics.report(expr.stable_ptr.untyped(), LoopsUnsupported),
+        )),
         semantic::Expr::Var(expr) => {
             log::trace!("Lowering a variable: {:?}", expr.debug(&ctx.expr_formatter));
             Ok(LoweredExpr::SemanticVar(expr.var, ctx.get_location(expr.stable_ptr.untyped())))
@@ -480,7 +488,7 @@ fn perform_function_call(
     inputs: Vec<VariableId>,
     ref_tys: Vec<semantic::TypeId>,
     ret_ty: semantic::TypeId,
-    location: StableLocation,
+    location: StableLocationOption,
 ) -> Result<(Vec<VariableId>, LoweredExpr), LoweringFlowError> {
     // If the function is not extern, simply call it.
     if function.try_get_extern_function_id(ctx.db.upcast()).is_none() {
@@ -778,11 +786,6 @@ fn extract_concrete_enum(
             ctx.diagnostics.report(expr.stable_ptr.untyped(), UnsupportedMatch),
         ));
     }
-    if concrete_variants.is_empty() {
-        return Err(LoweringFlowError::Failed(
-            ctx.diagnostics.report(expr.stable_ptr.untyped(), UnsupportedMatchEmptyEnum),
-        ));
-    }
 
     Ok(ExtractedEnumDetails { concrete_enum_id, concrete_variants, n_snapshots })
 }
@@ -975,7 +978,7 @@ fn lower_optimized_extern_error_propagate(
     ok_variant: &semantic::ConcreteVariant,
     err_variant: &semantic::ConcreteVariant,
     func_err_variant: &semantic::ConcreteVariant,
-    location: StableLocation,
+    location: StableLocationOption,
 ) -> LoweringResult<LoweredExpr> {
     log::trace!("Started lowering of an optimized error-propagate expression.");
 

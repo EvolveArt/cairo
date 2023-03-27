@@ -20,6 +20,7 @@ use traits::Not;
 use traits::Neg;
 use traits::Into;
 use traits::TryInto;
+use traits::Destruct;
 
 #[derive(Copy, Drop)]
 enum bool {
@@ -339,7 +340,8 @@ use integer::U256AddEq;
 use integer::U256SubEq;
 use integer::U256MulEq;
 use integer::U256PartialOrd;
-use integer::U256PartialEq;
+use integer::u256PartialEq;
+use integer::u256Serde;
 use integer::U256BitAnd;
 use integer::U256BitOr;
 use integer::U256BitXor;
@@ -390,6 +392,10 @@ mod serde;
 mod hash;
 use hash::pedersen;
 use hash::Pedersen;
+
+// Poseidon
+mod poseidon;
+use poseidon::Poseidon;
 
 // Debug.
 mod debug;

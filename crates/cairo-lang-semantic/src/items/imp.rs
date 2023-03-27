@@ -114,6 +114,13 @@ impl ImplId {
             ImplId::GenericParameter(_) | ImplId::ImplVar(_) => return None,
         })
     }
+    pub fn name(&self, db: &dyn SemanticGroup) -> SmolStr {
+        match self {
+            ImplId::Concrete(concrete_impl) => concrete_impl.name(db),
+            ImplId::GenericParameter(generic_param_impl) => generic_param_impl.name(db.upcast()),
+            ImplId::ImplVar(var) => format!("{var:?}").into(),
+        }
+    }
 }
 impl DebugWithDb<dyn SemanticGroup> for ImplId {
     fn fmt(
@@ -247,7 +254,7 @@ pub fn priv_impl_declaration_data_inner(
     let impl_ast = module_impls.get(&impl_def_id).to_maybe()?;
 
     // Generic params.
-    let mut resolver = Resolver::new_with_inference(db, module_file_id);
+    let mut resolver = Resolver::new(db, module_file_id);
     let generic_params = semantic_generic_params(
         db,
         &mut diagnostics,
@@ -269,6 +276,19 @@ pub fn priv_impl_declaration_data_inner(
         None
     }
     .ok_or_else(|| diagnostics.report(&trait_path_syntax, NotATrait));
+
+    // Check fully resolved.
+    if let Some((stable_ptr, inference_err)) = resolver.inference.finalize() {
+        inference_err.report(&mut diagnostics, stable_ptr);
+    }
+    let generic_params = resolver
+        .inference
+        .rewrite(generic_params)
+        .map_err(|err| err.report(&mut diagnostics, impl_ast.stable_ptr().untyped()))?;
+    let concrete_trait = resolver
+        .inference
+        .rewrite(concrete_trait)
+        .map_err(|err| err.report(&mut diagnostics, impl_ast.stable_ptr().untyped()))?;
 
     let attributes = ast_attributes_to_semantic(syntax_db, impl_ast.attributes(syntax_db));
     let resolved_lookback = Arc::new(resolver.lookback);
@@ -792,15 +812,18 @@ pub fn infer_impl_at_context(
 }
 
 /// Checks if there is at least one impl that can be inferred for a specific concrete trait.
-pub fn has_impl_at_context(
+pub fn get_impl_at_context(
     db: &dyn SemanticGroup,
     lookup_context: ImplLookupContext,
     concrete_trait_id: ConcreteTraitId,
     stable_ptr: SyntaxStablePtrId,
-) -> InferenceResult<()> {
+) -> InferenceResult<ImplId> {
     let mut inference = Inference::new(db);
-    inference.new_impl_var(concrete_trait_id, stable_ptr, lookup_context)?;
-    if let Some((_, err)) = inference.finalize() { Err(err) } else { Ok(()) }
+    let impl_id = inference.new_impl_var(concrete_trait_id, stable_ptr, lookup_context)?;
+    if let Some((_, err)) = inference.finalize() {
+        return Err(err);
+    };
+    inference.rewrite(impl_id)
 }
 
 // === Declaration ===
@@ -898,7 +921,7 @@ pub fn priv_impl_function_declaration_data(
     let function_syntax = &data.function_asts[impl_function_id];
     let syntax_db = db.upcast();
     let declaration = function_syntax.declaration(syntax_db);
-    let mut resolver = Resolver::new_with_inference(db, module_file_id);
+    let mut resolver = Resolver::new(db, module_file_id);
     let impl_def_generic_params = db.impl_def_generic_params(impl_def_id)?;
     for generic_param in impl_def_generic_params {
         resolver.add_generic_param(generic_param);
@@ -943,6 +966,19 @@ pub fn priv_impl_function_declaration_data(
         &function_generic_params,
         &inline_config,
     );
+
+    // Check fully resolved.
+    if let Some((stable_ptr, inference_err)) = resolver.inference.finalize() {
+        inference_err.report(&mut diagnostics, stable_ptr);
+    }
+    let function_generic_params = resolver
+        .inference
+        .rewrite(function_generic_params)
+        .map_err(|err| err.report(&mut diagnostics, function_syntax.stable_ptr().untyped()))?;
+    let signature = resolver
+        .inference
+        .rewrite(signature)
+        .map_err(|err| err.report(&mut diagnostics, function_syntax.stable_ptr().untyped()))?;
 
     Ok(ImplFunctionDeclarationData {
         function_declaration_data: FunctionDeclarationData {
@@ -1136,7 +1172,7 @@ pub fn priv_impl_function_body_data(
     let function_syntax = &data.function_asts[impl_function_id];
     // Compute declaration semantic.
     let declaration = db.priv_impl_function_declaration_data(impl_function_id)?;
-    let mut resolver = Resolver::new_with_inference(db, module_file_id);
+    let mut resolver = Resolver::new(db, module_file_id);
     for generic_param in db.impl_def_generic_params(impl_def_id)? {
         resolver.add_generic_param(generic_param);
     }

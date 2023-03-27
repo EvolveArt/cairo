@@ -1,10 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
-use cairo_lang_defs::diagnostic_utils::StableLocation;
+use cairo_lang_defs::diagnostic_utils::StableLocationOption;
 use cairo_lang_defs::ids::LanguageElementId;
 use cairo_lang_diagnostics::Maybe;
 use cairo_lang_semantic as semantic;
 use itertools::{chain, zip_eq, Itertools};
+use semantic::corelib::get_core_ty_by_name;
 use semantic::items::functions::{
     ConcreteFunctionWithBody, GenericFunctionId, GenericFunctionWithBodyId,
 };
@@ -24,7 +25,7 @@ struct Context<'a> {
     implicits_tys: Vec<TypeId>,
     implicit_vars_for_block: HashMap<BlockId, Vec<VariableId>>,
     visited: HashSet<BlockId>,
-    location: StableLocation,
+    location: StableLocationOption,
 }
 
 /// Lowering phase that adds implicits.
@@ -46,7 +47,7 @@ pub fn inner_lower_implicits(
 ) -> Maybe<()> {
     let generic_function_id = function_id.function_with_body_id(db.upcast());
     let function_signature = db.function_with_body_signature(generic_function_id)?;
-    let location = StableLocation::new(
+    let location = StableLocationOption::new(
         generic_function_id.module_file_id(db.upcast()),
         function_signature.stable_ptr.untyped(),
     );
@@ -72,7 +73,7 @@ pub fn inner_lower_implicits(
         location,
     };
 
-    // Start form root block.
+    // Start from root block.
     lower_block_implicits(&mut ctx, root_block_id)?;
 
     // Introduce new input variables in the root block.
@@ -88,7 +89,7 @@ pub fn inner_lower_implicits(
 fn alloc_implicits(
     ctx: &mut LoweringContext<'_>,
     implicits_tys: &[TypeId],
-    location: StableLocation,
+    location: StableLocationOption,
 ) -> Vec<VariableId> {
     implicits_tys.iter().copied().map(|ty| ctx.new_var(VarRequest { ty, location })).collect_vec()
 }
@@ -249,12 +250,12 @@ pub fn concrete_function_with_body_all_implicits(
     function: ConcreteFunctionWithBodyId,
 ) -> Maybe<HashSet<TypeId>> {
     // Find the SCC representative.
-    let scc_representative = db.concrete_function_with_body_scc_representative(function);
+    let scc_representative = db.concrete_function_with_body_scc_postpanic_representative(function);
 
     // Start with the explicit implicits of the SCC.
     let mut all_implicits = db.function_scc_explicit_implicits(scc_representative.clone())?;
 
-    let direct_callees = db.concrete_function_with_body_direct_callees(function)?;
+    let direct_callees = db.concrete_function_with_body_postpanic_direct_callees(function)?;
     // For each direct callee, add its implicits.
     for direct_callee in direct_callees {
         let generic_function = direct_callee.generic_function;
@@ -268,7 +269,7 @@ pub fn concrete_function_with_body_all_implicits(
                         generic_args: direct_callee.generic_args,
                     });
                 let direct_callee_representative =
-                    db.concrete_function_with_body_scc_representative(concrete_with_body);
+                    db.concrete_function_with_body_scc_postpanic_representative(concrete_with_body);
                 if direct_callee_representative == scc_representative {
                     // We already have the implicits of this SCC - do nothing.
                     continue;
@@ -289,7 +290,7 @@ pub fn concrete_function_with_body_all_implicits(
                         generic_args: direct_callee.generic_args,
                     });
                 let direct_callee_representative =
-                    db.concrete_function_with_body_scc_representative(concrete_with_body);
+                    db.concrete_function_with_body_scc_postpanic_representative(concrete_with_body);
                 if direct_callee_representative == scc_representative {
                     // We already have the implicits of this SCC - do nothing.
                     continue;
@@ -303,6 +304,15 @@ pub fn concrete_function_with_body_all_implicits(
         };
         all_implicits.extend(&current_implicits);
     }
+
+    if db.needs_withdraw_gas(function)? {
+        // `withdraw_gas` call needs to be added. Add the required implicits.
+        all_implicits.extend(&[
+            get_core_ty_by_name(db.upcast(), "RangeCheck".into(), vec![]),
+            get_core_ty_by_name(db.upcast(), "GasBuiltin".into(), vec![]),
+        ]);
+    }
+
     Ok(all_implicits)
 }
 
@@ -312,10 +322,14 @@ pub fn concrete_function_with_body_all_implicits_vec(
     db: &dyn LoweringGroup,
     function: ConcreteFunctionWithBodyId,
 ) -> Maybe<Vec<TypeId>> {
-    let implicits_set = db.concrete_function_with_body_all_implicits(function)?;
-    let mut implicits_vec = implicits_set.into_iter().collect_vec();
+    Ok(sort_implicits(db, db.concrete_function_with_body_all_implicits(function)?))
+}
 
+/// Sorts the given implicits: first the ones with precedence (according to it), then the others by
+/// their name.
+fn sort_implicits(db: &dyn LoweringGroup, implicits: HashSet<TypeId>) -> Vec<TypeId> {
     let semantic_db = db.upcast();
+    let mut implicits_vec = implicits.into_iter().collect_vec();
     let precedence = db.implicit_precedence();
     implicits_vec.sort_by_cached_key(|type_id| {
         if let Some(idx) = precedence.iter().position(|item| item == type_id) {
@@ -325,5 +339,5 @@ pub fn concrete_function_with_body_all_implicits_vec(
         (precedence.len(), type_id.format(semantic_db))
     });
 
-    Ok(implicits_vec)
+    implicits_vec
 }

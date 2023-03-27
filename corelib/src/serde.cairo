@@ -75,21 +75,6 @@ impl U128Serde of Serde::<u128> {
     }
 }
 
-impl U256Serde of Serde::<u256> {
-    fn serialize(ref serialized: Array<felt252>, input: u256) {
-        Serde::<u128>::serialize(ref serialized, input.low);
-        Serde::<u128>::serialize(ref serialized, input.high);
-    }
-    fn deserialize(ref serialized: Span<felt252>) -> Option<u256> {
-        Option::Some(
-            u256 {
-                low: Serde::<u128>::deserialize(ref serialized)?,
-                high: Serde::<u128>::deserialize(ref serialized)?,
-            }
-        )
-    }
-}
-
 impl ArraySerde<T, impl TSerde: Serde::<T>, impl TDrop: Drop::<T>> of Serde::<Array::<T>> {
     fn serialize(ref serialized: Array<felt252>, mut input: Array<T>) {
         Serde::<usize>::serialize(ref serialized, input.len());
@@ -163,7 +148,8 @@ impl TupleSize2Serde<E0,
 E1,
 impl E0Serde: Serde::<E0>,
 impl E0Drop: Drop::<E0>,
-impl E1Serde: Serde::<E1>> of Serde::<(E0, E1)> {
+impl E1Serde: Serde::<E1>,
+impl E0Drop: Drop::<E1>> of Serde::<(E0, E1)> {
     fn serialize(ref serialized: Array<felt252>, mut input: (E0, E1)) {
         let (e0, e1) = input;
         E0Serde::serialize(ref serialized, e0);
@@ -181,7 +167,8 @@ impl E0Serde: Serde::<E0>,
 impl E0Drop: Drop::<E0>,
 impl E1Serde: Serde::<E1>,
 impl E1Drop: Drop::<E1>,
-impl E2Serde: Serde::<E2>> of Serde::<(E0, E1, E2)> {
+impl E2Serde: Serde::<E2>,
+impl E2Drop: Drop::<E2>> of Serde::<(E0, E1, E2)> {
     fn serialize(ref serialized: Array<felt252>, mut input: (E0, E1, E2)) {
         let (e0, e1, e2) = input;
         E0Serde::serialize(ref serialized, e0);
@@ -209,7 +196,8 @@ impl E1Serde: Serde::<E1>,
 impl E1Drop: Drop::<E1>,
 impl E2Serde: Serde::<E2>,
 impl E2Drop: Drop::<E2>,
-impl E3Serde: Serde::<E3>> of Serde::<(E0, E1, E2, E3)> {
+impl E3Serde: Serde::<E3>,
+impl E3Drop: Drop::<E3>> of Serde::<(E0, E1, E2, E3)> {
     fn serialize(ref serialized: Array<felt252>, mut input: (E0, E1, E2, E3)) {
         let (e0, e1, e2, e3) = input;
         E0Serde::serialize(ref serialized, e0);

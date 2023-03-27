@@ -10,6 +10,7 @@ use zeroable::Zeroable;
 #[contract]
 mod TestContract {
     use array::ArrayTrait;
+    use option::OptionTrait;
     use traits::Into;
     use starknet::StorageAddress;
     use starknet::storage_access::StorageAddressSerde;
@@ -23,6 +24,19 @@ mod TestContract {
     #[view]
     fn get_plus_2(a: felt252) -> felt252 {
         a + 2
+    }
+
+    #[view]
+    fn spend_all_gas() {
+        match gas::withdraw_gas() {
+            Option::Some(_) => {},
+            Option::None(_) => {
+                let mut data = ArrayTrait::new();
+                data.append('Out of gas');
+                panic(data);
+            },
+        }
+        spend_all_gas();
     }
 
     #[view]
@@ -88,7 +102,9 @@ fn test_wrapper_too_many_enough_args() {
     TestContract::__external::get_plus_2(calldata.span());
 }
 
-fn serialized_element<T, impl TSerde: serde::Serde::<T>>(value: T) -> Span::<felt252> {
+fn serialized_element<T, impl TSerde: serde::Serde::<T>, impl TDestruct: Destruct::<T>>(
+    value: T
+) -> Span::<felt252> {
     let mut arr = ArrayTrait::new();
     serde::Serde::serialize(ref arr, value);
     arr.span()
@@ -99,7 +115,7 @@ fn single_deserialize<T, impl TSerde: serde::Serde::<T>>(ref data: Span::<felt25
 }
 
 #[test]
-#[available_gas(20000)]
+#[available_gas(30000)]
 fn test_wrapper_valid_args() {
     let mut retdata = TestContract::__external::get_plus_2(serialized_element(1));
     assert(single_deserialize(ref retdata) == 3, 'Wrong result');
@@ -107,10 +123,10 @@ fn test_wrapper_valid_args() {
 }
 
 #[test]
-#[available_gas(5000)]
+#[available_gas(20000)]
 #[should_panic]
 fn test_wrapper_valid_args_out_of_gas() {
-    TestContract::__external::get_plus_2(serialized_element(1));
+    TestContract::__external::spend_all_gas(ArrayTrait::new().span());
 }
 
 #[test]

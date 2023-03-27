@@ -17,6 +17,7 @@ use cairo_lang_sierra::extensions::gas::GasConcreteLibfunc;
 use cairo_lang_sierra::extensions::mem::MemConcreteLibfunc;
 use cairo_lang_sierra::extensions::nullable::NullableConcreteLibfunc;
 use cairo_lang_sierra::extensions::pedersen::PedersenConcreteLibfunc;
+use cairo_lang_sierra::extensions::poseidon::PoseidonConcreteLibfunc;
 use cairo_lang_sierra::extensions::starknet::StarkNetConcreteLibfunc;
 use cairo_lang_sierra::extensions::structure::StructConcreteLibfunc;
 use cairo_lang_sierra::extensions::uint::{
@@ -60,6 +61,11 @@ pub fn core_libfunc_ap_change<InfoProvider: InvocationApChangeInfoProvider>(
             }
             ArrayConcreteLibfunc::Get(libfunc) => {
                 if info_provider.type_size(&libfunc.ty) == 1 { [4, 3] } else { [5, 4] }
+                    .map(ApChange::Known)
+                    .to_vec()
+            }
+            ArrayConcreteLibfunc::Slice(libfunc) => {
+                if info_provider.type_size(&libfunc.ty) == 1 { [5, 4] } else { [7, 5] }
                     .map(ApChange::Known)
                     .to_vec()
             }
@@ -116,8 +122,8 @@ pub fn core_libfunc_ap_change<InfoProvider: InvocationApChangeInfoProvider>(
             }
             Felt252Concrete::BinaryOperation(bin_op) => {
                 let op = match bin_op {
-                    Felt252BinaryOperationConcrete::Binary(op) => op.operator,
-                    Felt252BinaryOperationConcrete::Const(op) => op.operator,
+                    Felt252BinaryOperationConcrete::WithVar(op) => op.operator,
+                    Felt252BinaryOperationConcrete::WithConst(op) => op.operator,
                 };
                 vec![ApChange::Known(if op == Felt252BinaryOperator::Div { 1 } else { 0 })]
             }
@@ -261,6 +267,9 @@ pub fn core_libfunc_ap_change<InfoProvider: InvocationApChangeInfoProvider>(
         },
         CoreConcreteLibfunc::Pedersen(libfunc) => match libfunc {
             PedersenConcreteLibfunc::PedersenHash(_) => vec![ApChange::Known(0)],
+        },
+        CoreConcreteLibfunc::Poseidon(libfunc) => match libfunc {
+            PoseidonConcreteLibfunc::HadesPermutation(_) => vec![ApChange::Known(0)],
         },
         CoreConcreteLibfunc::StarkNet(libfunc) => match libfunc {
             StarkNetConcreteLibfunc::ClassHashConst(_)
