@@ -22,7 +22,9 @@ use crate::extensions::felt252::{
 };
 use crate::extensions::felt252_dict::Felt252DictConcreteLibfunc;
 use crate::extensions::function_call::FunctionCallConcreteLibfunc;
-use crate::extensions::gas::GasConcreteLibfunc::{GetAvailableGas, RedepositGas, WithdrawGas};
+use crate::extensions::gas::GasConcreteLibfunc::{
+    BuiltinWithdrawGas, GetAvailableGas, GetBuiltinCosts, RedepositGas, WithdrawGas,
+};
 use crate::extensions::mem::MemConcreteLibfunc::{
     AllocLocal, FinalizeLocals, Rename, StoreLocal, StoreTemp,
 };
@@ -139,6 +141,9 @@ pub fn simulate<
                 0,
             ))
         }
+        Gas(BuiltinWithdrawGas(_) | GetBuiltinCosts(_)) => {
+            unimplemented!("Simulation of the builtin cost functionality is not implemented yet.")
+        }
         BranchAlign(_) => {
             get_statement_gas_info().ok_or(LibfuncSimulationError::UnresolvedStatementGasInfo)?;
             Ok((vec![], 0))
@@ -220,6 +225,7 @@ pub fn simulate<
             _ => Err(LibfuncSimulationError::WrongNumberOfArgs),
         },
         Array(ArrayConcreteLibfunc::SnapshotPopFront(_)) => todo!(),
+        Array(ArrayConcreteLibfunc::SnapshotPopBack(_)) => todo!(),
         Uint8(libfunc) => simulate_u8_libfunc(libfunc, &inputs),
         Uint16(libfunc) => simulate_u16_libfunc(libfunc, &inputs),
         Uint32(libfunc) => simulate_u32_libfunc(libfunc, &inputs),
@@ -335,9 +341,6 @@ pub fn simulate<
         CoreConcreteLibfunc::Poseidon(_) => {
             unimplemented!("Simulation of the Poseidon hash function is not implemented yet.");
         }
-        CoreConcreteLibfunc::BuiltinCost(_) => {
-            unimplemented!("Simulation of the builtin cost functionality is not implemented yet.")
-        }
         CoreConcreteLibfunc::StarkNet(_) => {
             unimplemented!("Simulation of the StarkNet functionalities is not implemented yet.")
         }
@@ -370,6 +373,7 @@ pub fn simulate<
             _ => Err(LibfuncSimulationError::WrongNumberOfArgs),
         },
         CoreConcreteLibfunc::Cast(_) => unimplemented!(),
+        CoreConcreteLibfunc::Uint256(_) => unimplemented!(),
     }
 }
 
@@ -434,6 +438,14 @@ fn simulate_bool_libfunc(
                 ))
             }
             [_, _] => Err(LibfuncSimulationError::WrongArgType),
+            _ => Err(LibfuncSimulationError::WrongNumberOfArgs),
+        },
+        BoolConcreteLibfunc::Equal(_) => match inputs {
+            [CoreValue::Enum { index: a_index, .. }, CoreValue::Enum { index: b_index, .. }] => {
+                // The variant index defines the true/false "value". Index zero is false.
+                Ok((vec![], usize::from(*a_index == *b_index)))
+            }
+            [_, _] => Err(LibfuncSimulationError::MemoryLayoutMismatch),
             _ => Err(LibfuncSimulationError::WrongNumberOfArgs),
         },
         BoolConcreteLibfunc::ToFelt252(_) => match inputs {

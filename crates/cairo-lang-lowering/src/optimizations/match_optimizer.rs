@@ -12,7 +12,7 @@ use crate::{
     StatementEnumConstruct, VarRemapping, VariableId,
 };
 
-/// Optimizes Statement::EnumConstruct that is follwed by a match to jump to the target of the
+/// Optimizes Statement::EnumConstruct that is followed by a match to jump to the target of the
 /// relevent match arm.
 pub fn optimize_matches(lowered: &mut FlatLowered) {
     if !lowered.blocks.is_empty() {
@@ -75,7 +75,7 @@ impl MatchOptimizerContext {
             remapping.insert(*var_id, *input);
         }
 
-        demand.apply_remapping(self, remapping.iter().map(|(dst, src)| (*dst, *src)));
+        demand.apply_remapping(self, remapping.iter().map(|(dst, src)| (*dst, *src)), ());
         info.demand = demand;
 
         self.fixes.push(FixInfo { statement_location, target_block: arm.block_id, remapping });
@@ -131,15 +131,15 @@ impl<'a> Analyzer<'a> for MatchOptimizerContext {
         info.candidate = None;
     }
 
-    fn visit_remapping(
+    fn visit_goto(
         &mut self,
         info: &mut Self::Info,
-        _block_id: BlockId,
+        _statement_location: StatementLocation,
         _target_block_id: BlockId,
         remapping: &VarRemapping,
     ) {
         if !remapping.is_empty() {
-            info.demand.apply_remapping(self, remapping.iter().map(|(dst, src)| (*dst, *src)));
+            info.demand.apply_remapping(self, remapping.iter().map(|(dst, src)| (*dst, *src)), ());
 
             if let Some(ref mut candidate) = &mut info.candidate {
                 let expected_remappings =

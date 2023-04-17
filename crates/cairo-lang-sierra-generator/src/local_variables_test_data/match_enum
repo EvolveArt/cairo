@@ -36,8 +36,8 @@ fn revoke_ap() -> felt252 {
     revoke_ap()
 }
 
+#[inline(never)]
 fn non_literal() -> felt252 {
-    1 + 2;
     1
 }
 
@@ -56,8 +56,8 @@ Parameters:
 blk0 (root):
 Statements:
   (v0: test::MyEnum) <- test::bar()
-  (v1: core::felt252) <- 2u
   (v2: core::felt252) <- test::non_literal()
+  (v1: core::felt252) <- 2u
 End:
   Match(match_enum(v0) {
     MyEnum::A(v3) => blk1,
@@ -191,6 +191,5 @@ End:
   Return(v21)
 
 //! > local_variables
-v19
 
 //! > block_infos

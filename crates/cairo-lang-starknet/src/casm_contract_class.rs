@@ -4,11 +4,10 @@ mod test;
 
 use cairo_lang_casm::hints::Hint;
 use cairo_lang_sierra::extensions::array::ArrayType;
-use cairo_lang_sierra::extensions::builtin_cost::CostTokenType;
 use cairo_lang_sierra::extensions::ec::EcOpType;
 use cairo_lang_sierra::extensions::enm::EnumType;
 use cairo_lang_sierra::extensions::felt252::Felt252Type;
-use cairo_lang_sierra::extensions::gas::GasBuiltinType;
+use cairo_lang_sierra::extensions::gas::{CostTokenType, GasBuiltinType};
 use cairo_lang_sierra::extensions::pedersen::PedersenType;
 use cairo_lang_sierra::extensions::range_check::RangeCheckType;
 use cairo_lang_sierra::extensions::segment_arena::SegmentArenaType;
@@ -71,7 +70,7 @@ fn skip_if_none<T>(opt_field: &Option<T>) -> bool {
 }
 
 /// Represents a contract in the Starknet network.
-#[derive(Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CasmContractClass {
     #[serde(serialize_with = "serialize_big_uint", deserialize_with = "deserialize_big_uint")]
     pub prime: BigUint,
@@ -347,7 +346,7 @@ impl CasmContractClass {
     }
 }
 
-#[derive(Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CasmContractEntryPoint {
     /// A field element that encodes the signature of the called function.
     #[serde(serialize_with = "serialize_big_uint", deserialize_with = "deserialize_big_uint")]
@@ -358,7 +357,7 @@ pub struct CasmContractEntryPoint {
     pub builtins: Vec<String>,
 }
 
-#[derive(Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CasmContractEntryPoints {
     #[serde(rename = "EXTERNAL")]
     pub external: Vec<CasmContractEntryPoint>,

@@ -1,16 +1,16 @@
 //! Basic runner for running a Sierra program on the vm.
 use std::collections::HashMap;
 
-use cairo_felt::Felt as Felt252;
+use cairo_felt::Felt252;
 use cairo_lang_casm::instructions::Instruction;
 use cairo_lang_casm::{casm, casm_extend};
 use cairo_lang_sierra::extensions::bitwise::BitwiseType;
-use cairo_lang_sierra::extensions::builtin_cost::CostTokenType;
 use cairo_lang_sierra::extensions::core::{CoreLibfunc, CoreType};
 use cairo_lang_sierra::extensions::ec::EcOpType;
 use cairo_lang_sierra::extensions::enm::EnumType;
-use cairo_lang_sierra::extensions::gas::GasBuiltinType;
+use cairo_lang_sierra::extensions::gas::{CostTokenType, GasBuiltinType};
 use cairo_lang_sierra::extensions::pedersen::PedersenType;
+use cairo_lang_sierra::extensions::poseidon::PoseidonType;
 use cairo_lang_sierra::extensions::range_check::RangeCheckType;
 use cairo_lang_sierra::extensions::segment_arena::SegmentArenaType;
 use cairo_lang_sierra::extensions::starknet::syscalls::SystemType;
@@ -24,6 +24,7 @@ use cairo_lang_sierra_to_casm::metadata::{
     calc_metadata, Metadata, MetadataComputationConfig, MetadataError,
 };
 use cairo_lang_utils::extract_matches;
+use cairo_vm::serde::deserialize_program::BuiltinName;
 use cairo_vm::vm::errors::vm_errors::VirtualMachineError;
 use itertools::chain;
 use num_traits::ToPrimitive;
@@ -124,13 +125,16 @@ impl SierraCasmRunner {
                 let builtin_cost_segment = vm.add_memory_segment();
                 for token_type in CostTokenType::iter_precost() {
                     vm.insert_value(
-                        &(builtin_cost_segment + (token_type.offset_in_builtin_costs() as usize)),
+                        (builtin_cost_segment + (token_type.offset_in_builtin_costs() as usize))
+                            .unwrap(),
                         Felt252::from(DUMMY_BUILTIN_GAS_COST),
-                    )?;
+                    )
+                    .map_err(|e| Box::new(e.into()))?;
                 }
                 // Put a pointer to the builtin cost segment at the end of the program (after the
                 // additional `ret` statement).
-                vm.insert_value(&(vm.get_pc() + context.data_len), builtin_cost_segment)?;
+                vm.insert_value((vm.get_pc() + context.data_len).unwrap(), builtin_cost_segment)
+                    .map_err(|e| Box::new(e.into()))?;
                 Ok(())
             },
         )?;
@@ -149,6 +153,7 @@ impl SierraCasmRunner {
                     && *generic_ty != BitwiseType::ID
                     && *generic_ty != EcOpType::ID
                     && *generic_ty != PedersenType::ID
+                    && *generic_ty != PoseidonType::ID
                     && *generic_ty != SystemType::ID
                     && *generic_ty != SegmentArenaType::ID
             }
@@ -247,21 +252,25 @@ impl SierraCasmRunner {
         func: &Function,
         args: &[Felt252],
         initial_gas: usize,
-    ) -> Result<(Vec<Instruction>, Vec<String>), RunnerError> {
+    ) -> Result<(Vec<Instruction>, Vec<BuiltinName>), RunnerError> {
         let mut arg_iter = args.iter();
         let mut expected_arguments_size = 0;
         let mut ctx = casm! {};
         // The builtins in the formatting expected by the runner.
-        let builtins: Vec<_> = ["pedersen", "range_check", "bitwise", "ec_op"]
-            .map(&str::to_string)
-            .into_iter()
-            .collect();
+        let builtins = vec![
+            BuiltinName::pedersen,
+            BuiltinName::range_check,
+            BuiltinName::bitwise,
+            BuiltinName::ec_op,
+            BuiltinName::poseidon,
+        ];
         // The offset [fp - i] for each of this builtins in this configuration.
         let builtin_offset: HashMap<cairo_lang_sierra::ids::GenericTypeId, i16> = HashMap::from([
-            (PedersenType::ID, 6),
-            (RangeCheckType::ID, 5),
-            (BitwiseType::ID, 4),
-            (EcOpType::ID, 3),
+            (PedersenType::ID, 7),
+            (RangeCheckType::ID, 6),
+            (BitwiseType::ID, 5),
+            (EcOpType::ID, 4),
+            (PoseidonType::ID, 3),
         ]);
         if func
             .signature

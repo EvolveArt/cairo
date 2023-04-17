@@ -8,7 +8,7 @@ use cairo_lang_utils::Upcast;
 use crate::db::SemanticGroup;
 use crate::diagnostic::SemanticDiagnosticKind::*;
 use crate::diagnostic::{NotFoundItemType, SemanticDiagnostics};
-use crate::resolve_path::{ResolvedGenericItem, ResolvedLookback, Resolver};
+use crate::resolve::{ResolvedGenericItem, ResolvedItems, Resolver};
 use crate::SemanticDiagnostic;
 
 #[derive(Clone, Debug, PartialEq, Eq, DebugWithDb)]
@@ -16,7 +16,7 @@ use crate::SemanticDiagnostic;
 pub struct UseData {
     diagnostics: Diagnostics<SemanticDiagnostic>,
     resolved_item: Maybe<ResolvedGenericItem>,
-    resolved_lookback: Arc<ResolvedLookback>,
+    resolved_lookback: Arc<ResolvedItems>,
 }
 
 /// Query implementation of [crate::db::SemanticGroup::priv_use_semantic_data].
@@ -33,15 +33,11 @@ pub fn priv_use_semantic_data(db: &(dyn SemanticGroup), use_id: UseId) -> Maybe<
     let syntax_db = db.upcast();
     let resolved_item = resolver.resolve_generic_path(
         &mut diagnostics,
-        &use_ast.name(syntax_db),
+        &use_ast.path(syntax_db),
         NotFoundItemType::Identifier,
     );
-    let resolved_lookback = Arc::new(resolver.lookback);
+    let resolved_lookback = Arc::new(resolver.resolved_items);
 
-    // Check fully resolved.
-    if let Some((stable_ptr, inference_err)) = resolver.inference.finalize() {
-        inference_err.report(&mut diagnostics, stable_ptr);
-    }
     Ok(UseData { diagnostics: diagnostics.build(), resolved_item, resolved_lookback })
 }
 
@@ -57,7 +53,7 @@ pub fn priv_use_semantic_data_cycle(
     let use_ast = module_uses.get(use_id).to_maybe()?;
     let syntax_db = db.upcast();
     let err = Err(diagnostics.report(
-        &use_ast.name(syntax_db),
+        &use_ast.path(syntax_db),
         if cycle.len() == 1 {
             // `use bad_name`, finds itself but we don't want to report a cycle in that case.
             PathNotFound(NotFoundItemType::Identifier)
@@ -68,7 +64,7 @@ pub fn priv_use_semantic_data_cycle(
     Ok(UseData {
         diagnostics: diagnostics.build(),
         resolved_item: err,
-        resolved_lookback: Arc::new(ResolvedLookback::default()),
+        resolved_lookback: Arc::new(ResolvedItems::default()),
     })
 }
 
@@ -81,10 +77,7 @@ pub fn use_semantic_diagnostics(
 }
 
 /// Query implementation of [crate::db::SemanticGroup::use_resolved_lookback].
-pub fn use_resolved_lookback(
-    db: &dyn SemanticGroup,
-    use_id: UseId,
-) -> Maybe<Arc<ResolvedLookback>> {
+pub fn use_resolved_lookback(db: &dyn SemanticGroup, use_id: UseId) -> Maybe<Arc<ResolvedItems>> {
     Ok(db.priv_use_semantic_data(use_id)?.resolved_lookback)
 }
 

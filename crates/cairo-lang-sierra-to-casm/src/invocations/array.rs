@@ -18,6 +18,7 @@ pub fn build(
         ArrayConcreteLibfunc::Append(_) => build_array_append(builder),
         ArrayConcreteLibfunc::PopFront(libfunc)
         | ArrayConcreteLibfunc::SnapshotPopFront(libfunc) => build_pop_front(&libfunc.ty, builder),
+        ArrayConcreteLibfunc::SnapshotPopBack(libfunc) => build_pop_back(&libfunc.ty, builder),
         ArrayConcreteLibfunc::Get(libfunc) => build_array_get(&libfunc.ty, builder),
         ArrayConcreteLibfunc::Slice(libfunc) => build_array_slice(&libfunc.ty, builder),
         ArrayConcreteLibfunc::Len(libfunc) => build_array_len(&libfunc.ty, builder),
@@ -91,6 +92,38 @@ fn build_pop_front(
         casm_builder,
         [
             ("Fallthrough", &[&[new_start, arr_end], &[arr_start]], None),
+            ("Failure", &[&[arr_start, arr_end]], Some(failure_handle)),
+        ],
+        Default::default(),
+    ))
+}
+
+/// Handles a Sierra statement for popping an element from the end of an array.
+fn build_pop_back(
+    elem_ty: &ConcreteTypeId,
+    builder: CompiledInvocationBuilder<'_>,
+) -> Result<CompiledInvocation, InvocationError> {
+    let [arr_start, arr_end] = builder.try_get_refs::<1>()?[0].try_unpack()?;
+    let element_size = builder.program_info.type_sizes[elem_ty];
+
+    let mut casm_builder = CasmBuilder::default();
+    add_input_variables! {casm_builder,
+        deref arr_start;
+        deref arr_end;
+    };
+    casm_build_extend! {casm_builder,
+        tempvar is_non_empty = arr_end - arr_start;
+        jump NonEmpty if is_non_empty != 0;
+        jump Failure;
+        NonEmpty:
+        const element_size_imm = element_size;
+        let new_end = arr_end - element_size_imm;
+    };
+    let failure_handle = get_non_fallthrough_statement_id(&builder);
+    Ok(builder.build_from_casm_builder(
+        casm_builder,
+        [
+            ("Fallthrough", &[&[arr_start, new_end], &[new_end]], None),
             ("Failure", &[&[arr_start, arr_end]], Some(failure_handle)),
         ],
         Default::default(),
@@ -211,22 +244,23 @@ fn build_array_slice(
         // Check that offset is in range.
         // Note that the offset may be as large as `(2^15 - 1) * (2^32 - 1) * 2`.
         tempvar is_in_range;
-        hint TestLessThan {lhs: slice_end_in_cells, rhs: array_length_in_cells} into {dst: is_in_range};
+        hint TestLessThanOrEqual {lhs: slice_end_in_cells, rhs: array_length_in_cells} into {dst: is_in_range};
         jump InRange if is_in_range != 0;
-        // Index out of bounds. Compute offset - length.
-        tempvar offset_length_diff = slice_end_in_cells - array_length_in_cells;
-        // Assert offset - length >= 0. Note that offset_length_diff is smaller than 2^128 as the index type is u32.
+        // Index out of bounds. Assert that end_offset > length or that end_offset - 1 >= length or that (end_offset - 1 - length) in [0, 2^128).
+        // Compute length + 1.
+        const one = 1;
+        tempvar length_plus_1 = array_length_in_cells + one;
+        // Compute the diff.
+        tempvar offset_length_diff = slice_end_in_cells - length_plus_1;
+        // Range check the diff.
         assert offset_length_diff  = *(range_check++);
         jump FailureHandle;
 
         InRange:
-        // Assert offset < length, or that length - (offset + 1) is in [0, 2^128).
-        // Compute offset + 1.
-        const one = 1;
-        tempvar element_offset_in_cells_plus_1 = slice_end_in_cells + one;
-        // Compute length - (offset + 1).
-        tempvar offset_length_diff = array_length_in_cells - element_offset_in_cells_plus_1;
-        // Assert length - (offset + 1) is in [0, 2^128).
+        // Assert end_offset <= length, or that length - end_offset is in [0, 2^128).
+        // Compute length - end_offset.
+        tempvar offset_length_diff = array_length_in_cells - slice_end_in_cells;
+        // Assert length - end_offset >= 0. Note that offset_length_diff is smaller than 2^128 as the index type is u32.
         assert offset_length_diff = *(range_check++);
     };
     let slice_start_in_cells = if element_size == 1 {

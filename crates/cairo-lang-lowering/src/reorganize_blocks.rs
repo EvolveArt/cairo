@@ -92,10 +92,10 @@ impl Analyzer<'_> for TopSortContext {
         self.old_block_rev_order.push(block_id);
     }
 
-    fn visit_remapping(
+    fn visit_goto(
         &mut self,
         _info: &mut Self::Info,
-        _block_id: BlockId,
+        _statement_location: StatementLocation,
         target_block_id: BlockId,
         remapping: &VarRemapping,
     ) {

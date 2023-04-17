@@ -8,10 +8,13 @@ use cairo_lang_sierra_generator::db::SierraGenGroup;
 use cairo_lang_sierra_generator::replace_ids::replace_sierra_ids_in_program;
 use cairo_lang_sierra_to_casm::test_utils::build_metadata;
 use cairo_lang_test_utils::parse_test_file::TestFileRunner;
+use cairo_lang_test_utils::test_lock;
 use cairo_lang_utils::ordered_hash_map::OrderedHashMap;
 use itertools::Itertools;
 use once_cell::sync::Lazy;
 
+/// Salsa database configured to find the corelib, when reused by different tests should be able to
+/// use the cached queries that rely on the corelib's code, which vastly reduces the tests runtime.
 static SHARED_DB: Lazy<Mutex<RootDatabase>> =
     Lazy::new(|| Mutex::new(RootDatabase::builder().detect_corelib().build().unwrap()));
 
@@ -38,6 +41,7 @@ cairo_lang_test_utils::test_file_test_with_runner!(
         u32: "u32",
         u64: "u64",
         u128: "u128",
+        u256: "u256",
         withdraw_gas_all: "withdraw_gas_all",
     },
     SmallE2ETestRunner
@@ -59,7 +63,7 @@ cairo_lang_test_utils::test_file_test_with_runner!(
 struct SmallE2ETestRunner;
 impl TestFileRunner for SmallE2ETestRunner {
     fn run(&mut self, inputs: &OrderedHashMap<String, String>) -> OrderedHashMap<String, String> {
-        let mut locked_db = SHARED_DB.lock().unwrap();
+        let mut locked_db = test_lock(&SHARED_DB);
         // Parse code and create semantic model.
         let test_module =
             setup_test_module(locked_db.deref_mut(), inputs["cairo"].as_str()).unwrap();

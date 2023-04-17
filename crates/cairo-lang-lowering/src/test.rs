@@ -13,9 +13,12 @@ use cairo_lang_utils::Upcast;
 
 use crate::add_withdraw_gas::add_withdraw_gas;
 use crate::db::LoweringGroup;
+use crate::destructs::add_destructs;
 use crate::fmt::LoweredFormatter;
+use crate::ids::ConcreteFunctionWithBodyId;
 use crate::implicits::lower_implicits;
 use crate::inline::apply_inlining;
+use crate::optimizations::delay_var_def::delay_var_def;
 use crate::optimizations::match_optimizer::optimize_matches;
 use crate::optimizations::remappings::optimize_remappings;
 use crate::panic::lower_panics;
@@ -71,18 +74,24 @@ fn test_function_lowering(
         inputs["module_code"].as_str(),
     )
     .split();
-    let lowered =
-        db.concrete_function_with_body_lowered(test_function.concrete_function_id).unwrap();
-    assert!(
-        lowered.blocks.iter().all(|(_, b)| b.is_set()),
-        "There should not be any unset flat blocks"
-    );
-    let diagnostics = db.module_lowering_diagnostics(test_function.module_id).unwrap();
+    let function_id =
+        ConcreteFunctionWithBodyId::from_semantic(db, test_function.concrete_function_id);
+
+    let lowered = db.concrete_function_with_body_lowered(function_id);
+    if let Ok(lowered) = &lowered {
+        assert!(
+            lowered.blocks.iter().all(|(_, b)| b.is_set()),
+            "There should not be any unset flat blocks"
+        );
+    }
+    let diagnostics = db.module_lowering_diagnostics(test_function.module_id).unwrap_or_default();
+    let lowering_format =
+        lowered.map(|lowered| formatted_lowered(db, &lowered)).unwrap_or_default();
 
     OrderedHashMap::from([
         ("semantic_diagnostics".into(), semantic_diagnostics),
         ("lowering_diagnostics".into(), diagnostics.format(db)),
-        ("lowering_flat".into(), formatted_lowered(db, &lowered)),
+        ("lowering_flat".into(), lowering_format),
     ])
 }
 
@@ -104,35 +113,48 @@ fn test_function_lowering_phases(
         inputs["module_code"].as_str(),
     )
     .split();
-    let concrete_function = test_function.concrete_function_id;
+    let function_id =
+        ConcreteFunctionWithBodyId::from_semantic(&db, test_function.concrete_function_id);
 
-    let before_all = db.priv_concrete_function_with_body_lowered_flat(concrete_function).unwrap();
+    let before_all = db.priv_concrete_function_with_body_lowered_flat(function_id).unwrap();
     assert!(
         before_all.blocks.iter().all(|(_, b)| b.is_set()),
         "There should not be any unset blocks"
     );
 
     let mut after_inlining = before_all.deref().clone();
-    apply_inlining(&db, test_function.function_id, &mut after_inlining).unwrap();
+    apply_inlining(&db, function_id, &mut after_inlining).unwrap();
 
     let mut after_add_withdraw_gas = after_inlining.clone();
-    add_withdraw_gas(&db, concrete_function, &mut after_add_withdraw_gas).unwrap();
+    add_withdraw_gas(&db, function_id, &mut after_add_withdraw_gas).unwrap();
 
-    let after_lower_panics = lower_panics(&db, concrete_function, &after_add_withdraw_gas).unwrap();
+    let after_lower_panics = lower_panics(&db, function_id, &after_add_withdraw_gas).unwrap();
 
-    let mut after_lower_implicits = after_lower_panics.clone();
-    lower_implicits(&db, concrete_function, &mut after_lower_implicits);
+    let mut after_add_destructs = after_lower_panics.clone();
+    add_destructs(&db, function_id, &mut after_add_destructs);
 
-    let mut after_optimize_matches = after_lower_implicits.clone();
+    let mut after_optimize_remappings1 = after_add_destructs.clone();
+    optimize_remappings(&mut after_optimize_remappings1);
+
+    let mut after_delay_var_def1 = after_optimize_remappings1.clone();
+    delay_var_def(&mut after_delay_var_def1);
+
+    let mut after_optimize_matches = after_delay_var_def1.clone();
     optimize_matches(&mut after_optimize_matches);
 
-    let mut after_optimize_remappings = after_optimize_matches.clone();
-    optimize_remappings(&mut after_optimize_remappings);
+    let mut after_lower_implicits = after_optimize_matches.clone();
+    lower_implicits(&db, function_id, &mut after_lower_implicits);
 
-    let mut after_reorganize_blocks = after_optimize_remappings.clone();
+    let mut after_optimize_remappings2 = after_lower_implicits.clone();
+    optimize_remappings(&mut after_optimize_remappings2);
+
+    let mut after_delay_var_def2 = after_optimize_remappings2.clone();
+    delay_var_def(&mut after_delay_var_def2);
+
+    let mut after_reorganize_blocks = after_delay_var_def2.clone();
     reorganize_blocks(&mut after_reorganize_blocks);
 
-    let after_all = db.concrete_function_with_body_lowered(concrete_function).unwrap();
+    let after_all = db.concrete_function_with_body_lowered(function_id).unwrap();
 
     // This asserts that we indeed follow the logic of `concrete_function_with_body_lowered`.
     // If something is changed there, it should be changed here too.
@@ -147,9 +169,13 @@ fn test_function_lowering_phases(
         ("after_inlining".into(), formatted_lowered(&db, &after_inlining)),
         ("after_add_withdraw_gas".into(), formatted_lowered(&db, &after_add_withdraw_gas)),
         ("after_lower_panics".into(), formatted_lowered(&db, &after_lower_panics)),
-        ("after_lower_implicits".into(), formatted_lowered(&db, &after_lower_implicits)),
+        ("after_add_destructs".into(), formatted_lowered(&db, &after_add_destructs)),
+        ("after_optimize_remappings1".into(), formatted_lowered(&db, &after_optimize_remappings1)),
+        ("after_delay_var_def1".into(), formatted_lowered(&db, &after_delay_var_def1)),
         ("after_optimize_matches".into(), formatted_lowered(&db, &after_optimize_matches)),
-        ("after_optimize_remappings".into(), formatted_lowered(&db, &after_optimize_remappings)),
+        ("after_lower_implicits".into(), formatted_lowered(&db, &after_lower_implicits)),
+        ("after_optimize_remappings2".into(), formatted_lowered(&db, &after_optimize_remappings2)),
+        ("after_delay_var_def2".into(), formatted_lowered(&db, &after_delay_var_def2)),
         (
             "after_reorganize_blocks (final)".into(),
             formatted_lowered(&db, &after_reorganize_blocks),

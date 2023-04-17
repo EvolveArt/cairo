@@ -1,6 +1,7 @@
 use cairo_lang_sierra::extensions::starknet::interoperability::ContractAddressTryFromFelt252Libfunc;
 use cairo_lang_sierra::extensions::starknet::storage::{
-    StorageAddressFromBaseAndOffsetLibfunc, StorageBaseAddressFromFelt252Libfunc,
+    StorageAddressFromBaseAndOffsetLibfunc, StorageAddressTryFromFelt252Trait,
+    StorageBaseAddressFromFelt252Libfunc,
 };
 use cairo_lang_sierra::extensions::try_from_felt252::TryFromFelt252;
 use cairo_lang_sierra::extensions::NamedLibfunc;
@@ -19,6 +20,7 @@ use cairo_lang_utils::unordered_hash_map::UnorderedHashMap;
 use num_bigint::{BigInt, BigUint, ToBigInt};
 use num_traits::ToPrimitive;
 use once_cell::sync::Lazy;
+use smol_str::SmolStr;
 use thiserror::Error;
 
 use crate::contract::starknet_keccak;
@@ -140,7 +142,7 @@ impl Felt252Serde for BigInt {
     fn deserialize(input: &[BigUintAsHex]) -> Result<(Self, &[BigUintAsHex]), Felt252SerdeError> {
         let first = input.first().ok_or(Felt252SerdeError::InvalidInputForDeserialization)?;
         Ok((
-            first.value.to_bigint().expect("Unsigned should always be convertable to signed."),
+            first.value.to_bigint().expect("Unsigned should always be convertible to signed."),
             &input[1..],
         ))
     }
@@ -165,6 +167,7 @@ static SERDE_SUPPORTED_LONG_IDS: Lazy<OrderedHashSet<&'static str>> = Lazy::new(
             StorageAddressFromBaseAndOffsetLibfunc::STR_ID,
             ContractAddressTryFromFelt252Libfunc::STR_ID,
             StorageBaseAddressFromFelt252Libfunc::STR_ID,
+            StorageAddressTryFromFelt252Trait::STR_ID,
         ]
         .into_iter(),
     )
@@ -198,7 +201,7 @@ macro_rules! generic_id_serde {
                 let head = input
                     .first()
                     .and_then(|id| {
-                        LONG_NAME_FIX.get(&id.value).map(|s| Self(s.into())).or_else(|| {
+                        LONG_NAME_FIX.get(&id.value).map(|s| Self(SmolStr::new(s))).or_else(|| {
                             std::str::from_utf8(&id.value.to_bytes_be())
                                 .ok()
                                 .map(|s| Self(s.into()))

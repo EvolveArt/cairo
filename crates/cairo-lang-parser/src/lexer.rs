@@ -111,19 +111,29 @@ impl<'a> Lexer<'a> {
     /// Token matchers.
     /// =================================================================================
 
-    /// Takes a hex or decimal number.
+    /// Takes a number. May be decimal, hex, oct or bin.
     fn take_token_literal_number(&mut self) -> TokenKind {
-        if self.peek() == Some('0') {
+        let special = if self.peek() == Some('0') {
             self.take();
-            if self.peek() == Some('x') {
-                self.take();
-                self.take_while(|c| c.is_ascii_hexdigit());
+            match self.peek() {
+                Some('x' | 'o' | 'b') => {
+                    match self.take() {
+                        Some('x') => self.take_while(|c| c.is_ascii_hexdigit()),
+                        Some('o') => self.take_while(|c| matches!(c, '0'..='7')),
+                        Some('b') => self.take_while(|c| matches!(c, '0'..='1')),
+                        _ => unreachable!(),
+                    }
+                    true
+                }
+                _ => false,
             }
+        } else {
+            false
+        };
+        // Not a special case - so just reading the rest of the digits.
+        if !special {
+            self.take_while(|c| c.is_ascii_digit());
         }
-
-        // If the token does not start with "0x", parse the token as a decimal number.
-        // Does nothing if the token starts with "0x" as it is already fully taken.
-        self.take_while(|c| c.is_ascii_digit());
 
         // Parse _type suffix.
         if self.peek() == Some('_') {
@@ -161,6 +171,7 @@ impl<'a> Lexer<'a> {
         self.take_while(|c| c.is_ascii_alphanumeric() || c == '_');
 
         match self.peek_span_text() {
+            "as" => TokenKind::As,
             "const" => TokenKind::Const,
             "false" => TokenKind::False,
             "true" => TokenKind::True,
@@ -317,6 +328,7 @@ enum TokenKind {
     ShortString,
 
     // Keywords.
+    As,
     Const,
     False,
     True,
@@ -395,6 +407,7 @@ enum TokenKind {
 
 fn token_kind_to_terminal_syntax_kind(kind: TokenKind) -> SyntaxKind {
     match kind {
+        TokenKind::As => SyntaxKind::TerminalAs,
         TokenKind::Const => SyntaxKind::TerminalConst,
         TokenKind::Identifier => SyntaxKind::TerminalIdentifier,
         TokenKind::LiteralNumber => SyntaxKind::TerminalLiteralNumber,

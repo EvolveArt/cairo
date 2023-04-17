@@ -4,9 +4,13 @@ use cairo_lang_defs::plugin::{
     DynGeneratedFileAuxData, MacroPlugin, PluginDiagnostic, PluginGeneratedFile, PluginResult,
 };
 use cairo_lang_semantic::plugin::{AsDynMacroPlugin, SemanticPlugin, TrivialPluginAuxData};
+use cairo_lang_syntax::attribute::structured::{
+    AttributeArg, AttributeArgVariant, AttributeStructurize,
+};
 use cairo_lang_syntax::node::ast::{AttributeList, MemberList};
 use cairo_lang_syntax::node::db::SyntaxGroup;
-use cairo_lang_syntax::node::{ast, Terminal, TypedSyntaxNode};
+use cairo_lang_syntax::node::helpers::QueryAttrs;
+use cairo_lang_syntax::node::{ast, Terminal};
 use indoc::formatdoc;
 use itertools::Itertools;
 use smol_str::SmolStr;
@@ -69,58 +73,67 @@ fn generate_derive_code_for_type(
 ) -> PluginResult {
     let mut diagnostics = vec![];
     let mut impls = vec![];
-    for attr in attributes.elements(db) {
-        if attr.attr(db).text(db) == "derive" {
-            if let ast::OptionAttributeArgs::AttributeArgs(args) = attr.args(db) {
-                for arg in args.arg_list(db).elements(db) {
-                    if let ast::Expr::Path(expr) = arg {
-                        if let [ast::PathSegment::Simple(segment)] = &expr.elements(db)[..] {
-                            let name = ident.text(db);
-                            let derived = segment.ident(db).text(db);
-                            match derived.as_str() {
-                                "Copy" | "Drop" => impls.push(get_empty_impl(&name, &derived)),
-                                "Clone" if !matches!(extra_info, ExtraInfo::Extern) => {
-                                    impls.push(get_clone_impl(&name, &extra_info))
-                                }
-                                "Destruct" if !matches!(extra_info, ExtraInfo::Extern) => {
-                                    impls.push(get_destruct_impl(&name, &extra_info))
-                                }
-                                "PartialEq" if !matches!(extra_info, ExtraInfo::Extern) => {
-                                    impls.push(get_partial_eq_impl(&name, &extra_info))
-                                }
-                                "Serde" if !matches!(extra_info, ExtraInfo::Extern) => {
-                                    impls.push(get_serde_impl(&name, &extra_info))
-                                }
-                                "Clone" | "Destruct" | "PartialEq" | "Serde" => {
-                                    diagnostics.push(PluginDiagnostic {
-                                        stable_ptr: expr.stable_ptr().untyped(),
-                                        message: "Unsupported trait for derive for extern types."
-                                            .into(),
-                                    })
-                                }
-                                _ => diagnostics.push(PluginDiagnostic {
-                                    stable_ptr: expr.stable_ptr().untyped(),
-                                    message: "Unsupported trait for derive.".into(),
-                                }),
-                            }
-                        } else {
-                            diagnostics.push(PluginDiagnostic {
-                                stable_ptr: expr.stable_ptr().untyped(),
-                                message: "Expected a single segment.".into(),
-                            });
-                        }
-                    } else {
-                        diagnostics.push(PluginDiagnostic {
-                            stable_ptr: arg.stable_ptr().untyped(),
-                            message: "Expected path.".into(),
-                        });
-                    }
-                }
-            } else {
+    for attr in attributes.query_attr(db, "derive") {
+        let attr = attr.structurize(db);
+
+        if attr.args.is_empty() {
+            diagnostics.push(PluginDiagnostic {
+                stable_ptr: attr.args_stable_ptr.untyped(),
+                message: "Expected args.".into(),
+            });
+            continue;
+        }
+
+        for arg in attr.args {
+            let AttributeArg{
+                variant: AttributeArgVariant::Unnamed {
+                    value: ast::Expr::Path(path),
+                    value_stable_ptr,
+                    ..
+                },
+                ..
+            } = arg else {
                 diagnostics.push(PluginDiagnostic {
-                    stable_ptr: attr.args(db).stable_ptr().untyped(),
-                    message: "Expected args.".into(),
+                    stable_ptr: arg.arg_stable_ptr.untyped(),
+                    message: "Expected path.".into(),
                 });
+                continue;
+            };
+
+            let [ast::PathSegment::Simple(segment)] = &path.elements(db)[..] else {
+                diagnostics.push(PluginDiagnostic {
+                    stable_ptr: value_stable_ptr.untyped(),
+                    message: "Expected a single segment.".into(),
+                });
+                continue;
+            };
+
+            let name = ident.text(db);
+            let derived = segment.ident(db).text(db);
+            match derived.as_str() {
+                "Copy" | "Drop" => impls.push(get_empty_impl(&name, &derived)),
+                "Clone" if !matches!(extra_info, ExtraInfo::Extern) => {
+                    impls.push(get_clone_impl(&name, &extra_info))
+                }
+                "Destruct" if !matches!(extra_info, ExtraInfo::Extern) => {
+                    impls.push(get_destruct_impl(&name, &extra_info))
+                }
+                "PartialEq" if !matches!(extra_info, ExtraInfo::Extern) => {
+                    impls.push(get_partial_eq_impl(&name, &extra_info))
+                }
+                "Serde" if !matches!(extra_info, ExtraInfo::Extern) => {
+                    impls.push(get_serde_impl(&name, &extra_info))
+                }
+                "Clone" | "Destruct" | "PartialEq" | "Serde" => {
+                    diagnostics.push(PluginDiagnostic {
+                        stable_ptr: value_stable_ptr.untyped(),
+                        message: "Unsupported trait for derive for extern types.".into(),
+                    })
+                }
+                _ => {
+                    // TODO(spapini): How to allow downstream derives while also
+                    //  alerting the user when the derive doesn't exist?
+                }
             }
         }
     }
@@ -256,13 +269,13 @@ fn get_serde_impl(name: &str, extra_info: &ExtraInfo) -> String {
         ExtraInfo::Enum(variants) => {
             formatdoc! {"
                     impl {name}Serde of serde::Serde::<{name}> {{
-                        fn serialize(ref output: array::Array<felt252>, value: {name}) {{
-                            match lhs {{
+                        fn serialize(ref output: array::Array<felt252>, input: {name}) {{
+                            match input {{
                                 {}
                             }}
                         }}
-                        fn deserialize(ref input: array::Span<felt252>) -> Option<{name}> {{
-                            let idx: felt252 = serde::Serde::deserialize(ref input)?;
+                        fn deserialize(ref serialized: array::Span<felt252>) -> Option<{name}> {{
+                            let idx: felt252 = serde::Serde::deserialize(ref serialized)?;
                             Option::Some(
                                 {}
                                 else {{ None }}
@@ -285,18 +298,18 @@ fn get_serde_impl(name: &str, extra_info: &ExtraInfo) -> String {
         ExtraInfo::Struct(members) => {
             formatdoc! {"
                     impl {name}Serde of serde::Serde::<{name}> {{
-                        fn serialize(ref output: array::Array<felt252>, value: {name}) {{
+                        fn serialize(ref output: array::Array<felt252>, input: {name}) {{
                             {}
                         }}
-                        fn deserialize(ref input: array::Span<felt252>) -> Option<{name}> {{
+                        fn deserialize(ref serialized: array::Span<felt252>) -> Option<{name}> {{
                             Option::Some({name} {{
                                 {}
                             }})
                         }}
                     }}
                 ",
-                members.iter().map(|member| format!("serde::Serde::serialize(ref output, value.{member})")).join(";\n        "),
-                members.iter().map(|member| format!("{member}: serde::Serde::deserialize(ref input)?,")).join("\n            "),
+                members.iter().map(|member| format!("serde::Serde::serialize(ref output, input.{member})")).join(";\n        "),
+                members.iter().map(|member| format!("{member}: serde::Serde::deserialize(ref serialized)?,")).join("\n            "),
             }
         }
         ExtraInfo::Extern => unreachable!(),

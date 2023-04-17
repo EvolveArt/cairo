@@ -24,10 +24,10 @@ pub trait Analyzer<'a> {
         stmt: &Statement,
     ) {
     }
-    fn visit_remapping(
+    fn visit_goto(
         &mut self,
         info: &mut Self::Info,
-        block_id: BlockId,
+        statement_location: StatementLocation,
         target_block_id: BlockId,
         remapping: &VarRemapping,
     ) {
@@ -90,7 +90,12 @@ impl<'a, TAnalyzer: Analyzer<'a>> BackAnalysis<'a, TAnalyzer> {
             FlatBlockEnd::NotSet => unreachable!(),
             FlatBlockEnd::Goto(target_block_id, remapping) => {
                 let mut info = self.get_block_info(*target_block_id);
-                self.analyzer.visit_remapping(&mut info, block_id, *target_block_id, remapping);
+                self.analyzer.visit_goto(
+                    &mut info,
+                    statement_location,
+                    *target_block_id,
+                    remapping,
+                );
                 info
             }
             FlatBlockEnd::Return(vars) => self.analyzer.info_from_return(statement_location, vars),

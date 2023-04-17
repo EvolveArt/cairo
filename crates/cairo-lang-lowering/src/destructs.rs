@@ -3,17 +3,19 @@
 //! destructor calls.
 
 use cairo_lang_defs::ids::LanguageElementId;
+use cairo_lang_semantic as semantic;
 use cairo_lang_semantic::corelib::{get_core_trait, unit_ty};
 use cairo_lang_semantic::items::functions::{GenericFunctionId, ImplGenericFunctionId};
 use cairo_lang_semantic::items::imp::ImplId;
-use cairo_lang_semantic::{ConcreteFunction, ConcreteFunctionWithBodyId, FunctionLongId};
+use cairo_lang_semantic::ConcreteFunction;
 use itertools::{zip_eq, Itertools};
 
 use crate::borrow_check::analysis::{Analyzer, BackAnalysis, StatementLocation};
 use crate::borrow_check::demand::DemandReporter;
 use crate::borrow_check::Demand;
 use crate::db::LoweringGroup;
-use crate::lower::context::{LoweringContextBuilder, VarRequest};
+use crate::ids::{ConcreteFunctionWithBodyId, SemanticFunctionIdEx};
+use crate::lower::context::{VarRequest, VariableAllocator};
 use crate::{BlockId, FlatLowered, MatchInfo, Statement, StatementCall, VarRemapping, VariableId};
 
 pub type LoweredDemand = Demand<VariableId>;
@@ -57,21 +59,26 @@ impl<'a> Analyzer<'_> for DestructAdder<'a> {
     fn visit_stmt(
         &mut self,
         info: &mut Self::Info,
-        statement_location: StatementLocation,
+        (block_id, statement_index): StatementLocation,
         stmt: &Statement,
     ) {
-        info.variables_introduced(self, &stmt.outputs(), statement_location);
+        info.variables_introduced(
+            self,
+            &stmt.outputs(),
+            // Since we need to insert destructor call right after the statement.
+            (block_id, statement_index + 1),
+        );
         info.variables_used(self, &stmt.inputs(), ());
     }
 
-    fn visit_remapping(
+    fn visit_goto(
         &mut self,
         info: &mut Self::Info,
-        _block_id: BlockId,
+        _statement_location: StatementLocation,
         _target_block_id: BlockId,
         remapping: &VarRemapping,
     ) {
-        info.apply_remapping(self, remapping.iter().map(|(dst, src)| (*dst, *src)));
+        info.apply_remapping(self, remapping.iter().map(|(dst, src)| (*dst, *src)), ());
     }
 
     fn merge_match(
@@ -132,42 +139,48 @@ pub fn add_destructs(
         );
         assert!(root_demand.finalize(), "Undefined variable should not happen at this stage");
 
-        let generic_function_id = function_id.function_with_body_id(db.upcast());
-        let lowering_info = LoweringContextBuilder::new(db, generic_function_id).unwrap();
-        let mut lowering_ctx = lowering_info.ctx().unwrap();
-        lowering_ctx.variables = lowered.variables.clone();
+        let mut variables = VariableAllocator::new(
+            db,
+            function_id.function_with_body_id(db).base_semantic_function(db),
+            lowered.variables.clone(),
+        )
+        .unwrap();
 
         let trait_id = get_core_trait(db.upcast(), "Destruct".into());
         let trait_function =
             db.trait_function_by_name(trait_id, "destruct".into()).unwrap().unwrap();
 
         // Add destructions.
+        let stable_ptr = function_id
+            .function_with_body_id(db.upcast())
+            .base_semantic_function(db)
+            .untyped_stable_ptr(db.upcast());
         for destruction in analysis.analyzer.destructions {
-            let output_var = lowering_ctx.new_var(VarRequest {
+            let output_var = variables.new_var(VarRequest {
                 ty: unit_ty(db.upcast()),
-                location: lowering_ctx
-                    .get_location(generic_function_id.untyped_stable_ptr(db.upcast())),
+                location: variables.get_location(stable_ptr),
             });
-            let DestructionEntry { position: (block_id, statement_offset), var_id, impl_id } =
+            let DestructionEntry { position: (block_id, insert_index), var_id, impl_id } =
                 destruction;
-            lowered.blocks[block_id].statements.insert(
-                statement_offset,
-                Statement::Call(StatementCall {
-                    function: db.intern_function(FunctionLongId {
-                        function: ConcreteFunction {
-                            generic_function: GenericFunctionId::Impl(ImplGenericFunctionId {
-                                impl_id,
-                                function: trait_function,
-                            }),
-                            generic_args: vec![],
-                        },
+            let semantic_function = db.intern_function(semantic::FunctionLongId {
+                function: ConcreteFunction {
+                    generic_function: GenericFunctionId::Impl(ImplGenericFunctionId {
+                        impl_id,
+                        function: trait_function,
                     }),
+                    generic_args: vec![],
+                },
+            });
+            lowered.blocks[block_id].statements.insert(
+                insert_index,
+                Statement::Call(StatementCall {
+                    function: semantic_function.lowered(db),
                     inputs: vec![var_id],
                     outputs: vec![output_var],
                     location: lowered.variables[var_id].location,
                 }),
             )
         }
-        lowered.variables = std::mem::take(&mut lowering_ctx.variables);
+        lowered.variables = variables.variables;
     }
 }

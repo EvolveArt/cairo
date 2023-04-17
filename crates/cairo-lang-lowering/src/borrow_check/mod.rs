@@ -58,7 +58,7 @@ impl<'a> Analyzer<'_> for BorrowChecker<'a> {
         info.variables_introduced(self, &stmt.outputs(), ());
         match stmt {
             Statement::Call(stmt) => {
-                if let Ok(signature) = self.db.concrete_function_signature(stmt.function) {
+                if let Ok(signature) = stmt.function.signature(self.db) {
                     if signature.panicable {
                         // Be prepared to panic here.
                         let panic_demand = LoweredDemand::default();
@@ -83,14 +83,14 @@ impl<'a> Analyzer<'_> for BorrowChecker<'a> {
         info.variables_used(self, &stmt.inputs(), ());
     }
 
-    fn visit_remapping(
+    fn visit_goto(
         &mut self,
         info: &mut Self::Info,
-        _block_id: BlockId,
+        _statement_location: StatementLocation,
         _target_block_id: BlockId,
         remapping: &VarRemapping,
     ) {
-        info.apply_remapping(self, remapping.iter().map(|(dst, src)| (*dst, *src)));
+        info.apply_remapping(self, remapping.iter().map(|(dst, src)| (*dst, *src)), ());
     }
 
     fn merge_match(

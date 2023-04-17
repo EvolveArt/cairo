@@ -2,8 +2,6 @@ use array::ArrayTrait;
 use array::SpanTrait;
 use box::BoxTrait;
 use option::OptionTrait;
-use starknet::ContractAddressZeroable;
-use starknet::ContractAddressIntoFelt252;
 use traits::Into;
 use zeroable::Zeroable;
 
@@ -13,7 +11,6 @@ mod TestContract {
     use option::OptionTrait;
     use traits::Into;
     use starknet::StorageAddress;
-    use starknet::storage_access::StorageAddressSerde;
 
     struct Storage {
         value: felt252,
@@ -28,19 +25,12 @@ mod TestContract {
 
     #[view]
     fn spend_all_gas() {
-        match gas::withdraw_gas() {
-            Option::Some(_) => {},
-            Option::None(_) => {
-                let mut data = ArrayTrait::new();
-                data.append('Out of gas');
-                panic(data);
-            },
-        }
+        gas::withdraw_gas().expect('Out of gas');
         spend_all_gas();
     }
 
     #[view]
-    fn get_appended_array(mut arr: Array::<felt252>) -> Array::<felt252> {
+    fn get_appended_array(mut arr: Array<felt252>) -> Array<felt252> {
         let elem = arr.len().into();
         arr.append(elem);
         arr
@@ -102,15 +92,15 @@ fn test_wrapper_too_many_enough_args() {
     TestContract::__external::get_plus_2(calldata.span());
 }
 
-fn serialized_element<T, impl TSerde: serde::Serde::<T>, impl TDestruct: Destruct::<T>>(
+fn serialized_element<T, impl TSerde: serde::Serde<T>, impl TDestruct: Destruct<T>>(
     value: T
-) -> Span::<felt252> {
+) -> Span<felt252> {
     let mut arr = ArrayTrait::new();
     serde::Serde::serialize(ref arr, value);
     arr.span()
 }
 
-fn single_deserialize<T, impl TSerde: serde::Serde::<T>>(ref data: Span::<felt252>) -> T {
+fn single_deserialize<T, impl TSerde: serde::Serde<T>>(ref data: Span::<felt252>) -> T {
     serde::Serde::deserialize(ref data).expect('missing data')
 }
 
@@ -260,5 +250,5 @@ fn test_storage_address() {
     let storage_address = starknet::storage_address_try_from_felt252(0x17).unwrap();
     let ret_data = TestContract::__external::test_storage_address(args.span());
 
-    assert(*args.at(0_u32) == *ret_data.at(0_u32), 'Unexpected ret_data.');
+    assert(*args[0_u32] == *ret_data[0_u32], 'Unexpected ret_data.');
 }

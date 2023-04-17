@@ -1,13 +1,11 @@
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use cairo_lang_defs::ids::{FreeFunctionId, FunctionTitleId, LanguageElementId};
 use cairo_lang_diagnostics::{Diagnostics, Maybe, ToMaybe};
+use cairo_lang_syntax::attribute::structured::AttributeListStructurize;
 use cairo_lang_syntax::node::TypedSyntaxNode;
-use cairo_lang_utils::try_extract_matches;
 use cairo_lang_utils::unordered_hash_map::UnorderedHashMap;
 
-use super::attribute::ast_attributes_to_semantic;
 use super::function_with_body::{get_inline_config, FunctionBody, FunctionBodyData};
 use super::functions::{
     forbid_inline_always_with_impl_generic_param, FunctionDeclarationData, InlineConfiguration,
@@ -16,9 +14,9 @@ use super::generics::semantic_generic_params;
 use crate::db::SemanticGroup;
 use crate::diagnostic::SemanticDiagnostics;
 use crate::expr::compute::{compute_root_expr, ComputationContext, Environment};
-use crate::resolve_path::{ResolvedLookback, Resolver};
+use crate::resolve::{ResolvedItems, Resolver};
 use crate::substitution::SemanticRewriter;
-use crate::{semantic, Expr, FunctionId, SemanticDiagnostic, TypeId};
+use crate::{semantic, SemanticDiagnostic, TypeId};
 
 #[cfg(test)]
 #[path = "free_function_test.rs"]
@@ -66,7 +64,7 @@ pub fn free_function_generic_params(
 pub fn free_function_declaration_resolved_lookback(
     db: &dyn SemanticGroup,
     free_function_id: FreeFunctionId,
-) -> Maybe<Arc<ResolvedLookback>> {
+) -> Maybe<Arc<ResolvedItems>> {
     Ok(db.priv_free_function_declaration_data(free_function_id)?.resolved_lookback)
 }
 
@@ -114,7 +112,7 @@ pub fn priv_free_function_declaration_data(
         &mut environment,
     );
 
-    let attributes = ast_attributes_to_semantic(syntax_db, function_syntax.attributes(syntax_db));
+    let attributes = function_syntax.attributes(syntax_db).structurize(syntax_db);
 
     let inline_config = get_inline_config(db, &mut diagnostics, &attributes)?;
 
@@ -139,7 +137,7 @@ pub fn priv_free_function_declaration_data(
         environment,
         generic_params,
         attributes,
-        resolved_lookback: Arc::new(resolver.lookback),
+        resolved_lookback: Arc::new(resolver.resolved_items),
         inline_config,
     })
 }
@@ -162,7 +160,7 @@ pub fn free_function_body_diagnostics(
 pub fn free_function_body_resolved_lookback(
     db: &dyn SemanticGroup,
     free_function_id: FreeFunctionId,
-) -> Maybe<Arc<ResolvedLookback>> {
+) -> Maybe<Arc<ResolvedItems>> {
     Ok(db.priv_free_function_body_data(free_function_id)?.resolved_lookback)
 }
 
@@ -200,24 +198,13 @@ pub fn priv_free_function_body_data(
     let body_expr = compute_root_expr(&mut ctx, &function_body, return_type)?;
     let ComputationContext { exprs, statements, resolver, .. } = ctx;
 
-    let direct_callees: HashSet<FunctionId> = exprs
-        .iter()
-        .filter_map(|(_id, expr)| try_extract_matches!(expr, Expr::FunctionCall))
-        .map(|f| f.function)
-        .collect();
-
     let expr_lookup: UnorderedHashMap<_, _> =
         exprs.iter().map(|(expr_id, expr)| (expr.stable_ptr(), expr_id)).collect();
-    let resolved_lookback = Arc::new(resolver.lookback);
+    let resolved_lookback = Arc::new(resolver.resolved_items);
     Ok(FunctionBodyData {
         diagnostics: diagnostics.build(),
         expr_lookup,
         resolved_lookback,
-        body: Arc::new(FunctionBody {
-            exprs,
-            statements,
-            body_expr,
-            direct_callees: direct_callees.into_iter().collect(),
-        }),
+        body: Arc::new(FunctionBody { exprs, statements, body_expr }),
     })
 }

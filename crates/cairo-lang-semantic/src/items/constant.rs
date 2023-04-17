@@ -8,7 +8,7 @@ use cairo_lang_syntax::node::TypedSyntaxNode;
 use crate::db::SemanticGroup;
 use crate::diagnostic::SemanticDiagnostics;
 use crate::expr::compute::{compute_expr_semantic, ComputationContext, Environment};
-use crate::resolve_path::{ResolvedLookback, Resolver};
+use crate::resolve::{ResolvedItems, Resolver};
 use crate::substitution::SemanticRewriter;
 use crate::types::resolve_type;
 use crate::{Expr, SemanticDiagnostic};
@@ -31,7 +31,7 @@ pub struct Constant {
 pub struct ConstantData {
     diagnostics: Diagnostics<SemanticDiagnostic>,
     constant: Constant,
-    resolved_lookback: Arc<ResolvedLookback>,
+    resolved_lookback: Arc<ResolvedItems>,
 }
 
 /// Query implementation of [SemanticGroup::priv_constant_semantic_data].
@@ -60,17 +60,8 @@ pub fn priv_constant_semantic_data(
     let mut ctx =
         ComputationContext::new(db, &mut diagnostics, resolver, None, Environment::default());
     let value = compute_expr_semantic(&mut ctx, &const_ast.value(syntax_db));
-    let value_type = value.ty();
-
-    // Check that the type matches.
-    if !const_type.is_missing(db) && !value_type.is_missing(db) && value_type != const_type {
-        ctx.diagnostics.report(
-            &const_ast.value(syntax_db),
-            crate::diagnostic::SemanticDiagnosticKind::WrongType {
-                expected_ty: const_type,
-                actual_ty: value_type,
-            },
-        );
+    if let Err(err) = ctx.resolver.inference.conform_ty(value.ty(), const_type) {
+        err.report(ctx.diagnostics, const_ast.stable_ptr().untyped());
     }
 
     // Check that the expression is a literal.
@@ -82,7 +73,7 @@ pub fn priv_constant_semantic_data(
     };
 
     let constant = Constant { value };
-    let resolved_lookback = Arc::new(ctx.resolver.lookback);
+    let resolved_lookback = Arc::new(ctx.resolver.resolved_items);
 
     // Check fully resolved.
     if let Some((stable_ptr, inference_err)) = ctx.resolver.inference.finalize() {
@@ -114,6 +105,6 @@ pub fn constant_semantic_data(db: &dyn SemanticGroup, const_id: ConstantId) -> M
 pub fn constant_resolved_lookback(
     db: &dyn SemanticGroup,
     const_id: ConstantId,
-) -> Maybe<Arc<ResolvedLookback>> {
+) -> Maybe<Arc<ResolvedItems>> {
     Ok(db.priv_constant_semantic_data(const_id)?.resolved_lookback)
 }
