@@ -193,42 +193,6 @@ use crate::test_utils::{build_metadata, read_sierra_example_file, strip_comments
                 ret;
             "};
             "branch align")]
-#[test_case(indoc!{"
-                type RangeCheck = RangeCheck;
-                type u128 = u128;
-
-                libfunc revoke_ap_tracking = revoke_ap_tracking;
-                libfunc branch_align = branch_align;
-                libfunc jump = jump;
-                libfunc u128_lt = u128_lt;
-                libfunc store_u128 = store_temp<u128>;
-                libfunc store_rc = store_temp<RangeCheck>;
-
-                revoke_ap_tracking() -> ();
-                u128_lt([1], [2], [3]) {fallthrough([1]) 4([1]) };
-                branch_align() -> ();
-                jump() { 5() };
-                branch_align() -> ();
-
-                store_rc([1]) -> ([1]);
-                return ([1]);
-
-                test_program@0([1]: RangeCheck, [2]: u128, [3]: u128) -> (RangeCheck);
-            "}, true, indoc!{"
-                [fp + -4] = [ap + 1] + [fp + -3], ap++;
-                %{ memory[ap + -1] = memory[ap + 0] < 340282366920938463463374607431768211456 %}
-                jmp rel 7 if [ap + -1] != 0, ap++;
-                // a < b.
-                [ap + 0] = [ap + -1] + 340282366920938463463374607431768211456, ap++;
-                [ap + -1] = [[fp + -5] + 0];
-                jmp rel 5;
-                // a < b.
-                [ap + -1] = [[fp + -5] + 0];
-                jmp rel 2;
-                // Store range_check and return.
-                [ap + 0] = [fp + -5] + 1, ap++;
-                ret;
-            "}; "u128_lt")]
 #[test_case(indoc! {"
                 type u128 = u128;
                 type RangeCheck = RangeCheck;
@@ -405,6 +369,8 @@ fn sierra_to_casm(sierra_code: &str, check_gas_usage: bool, expected_casm: &str)
 
 // TODO(ilya, 10/10/2022): Improve error messages.
 #[test_case(indoc! {"
+                type felt252 = felt252;
+
                 return([2]);
 
                 test_program@0() -> (felt252);
@@ -439,7 +405,7 @@ fn sierra_to_casm(sierra_code: &str, check_gas_usage: bool, expected_casm: &str)
 
                 test_program@0([1]: felt252) -> ();
             "},
-            "Error from program registry";
+            "Error from program registry: Could not find the requested libfunc";
             "undeclared libfunc")]
 #[test_case(indoc! {"
                 type felt252 = felt252;
@@ -447,7 +413,7 @@ fn sierra_to_casm(sierra_code: &str, check_gas_usage: bool, expected_casm: &str)
                 libfunc store_temp_felt252 = store_temp<felt252>;
                 libfunc store_temp_felt252 = store_temp<felt252>;
             "},
-            "Error from program registry";
+            "Error from program registry: Used the same concrete libfunc id twice";
             "Concrete libfunc Id used twice")]
 #[test_case(indoc! {"
                 type felt252 = felt252;
@@ -477,11 +443,19 @@ fn sierra_to_casm(sierra_code: &str, check_gas_usage: bool, expected_casm: &str)
             "}, "InvalidStatementIdx";
             "Invalid entry point")]
 #[test_case(indoc! {"
+                type felt252 = felt252;
+
                 return();
 
                 foo@0([1]: felt252, [1]: felt252) -> ();
             "}, "#0: Invalid function declaration.";
             "Bad Declaration")]
+#[test_case(indoc! {"
+                return();
+
+                foo@0([0]: BadType) -> ();
+            "}, "Error from program registry: Could not find the requested type";
+            "Unknown type")]
 #[test_case(indoc! {"
             return();
             "}, "MissingAnnotationsForStatement";
@@ -489,7 +463,7 @@ fn sierra_to_casm(sierra_code: &str, check_gas_usage: bool, expected_casm: &str)
 #[test_case(indoc! {"
                 type NonZeroFelt252 = NonZero<felt252>;
                 type felt252 = felt252;
-            "}, "Error from program registry";
+            "}, "Error from program registry: Error during type specialization";
             "type ordering bad for building size map")]
 #[test_case(indoc! {"
                 type felt252 = felt252;
@@ -642,7 +616,7 @@ fn sierra_to_casm(sierra_code: &str, check_gas_usage: bool, expected_casm: &str)
                 return (); // The failed merge statement #8.
 
                 test_program@0([1]: felt252) -> ();
-            "}, "#8: Inconsistent ap tracking base.";
+            "}, "#8: Inconsistent ap tracking.";
             "Inconsistent ap tracking base.")]
 #[test_case(indoc! {"
                 libfunc enable_ap_tracking = enable_ap_tracking;
@@ -716,7 +690,7 @@ of the libfunc or return statement.";
                 return ();
 
                 foo@0([1]: felt252) -> ();
-            "}, "#7: Inconsistent ap tracking base.";
+            "}, "#7: Inconsistent ap tracking.";
             "Inconsistent ap tracking.")]
 #[test_case(indoc! {"
                 libfunc finalize_locals = finalize_locals;
@@ -780,13 +754,16 @@ of the libfunc or return statement.";
 
                 libfunc alloc_local_felt252 = alloc_local<felt252>;
                 libfunc store_temp_felt252 = store_temp<UninitializedFelt252>;
+                libfunc drop_felt252 = drop<UninitializedFelt252>;
 
                 alloc_local_felt252() -> ([1]);
                 store_temp_felt252([1]) -> ([1]);
+                drop_felt252([1]) -> ();
                 return ();
 
                 foo@0() -> ();
-            "}, "#1: The functionality is supported only for sized types.";
+            "},
+            "Error from program registry: Error during libfunc specialization";
             "store_temp<Uninitialized<felt252>()")]
 #[test_case(indoc! {"
                 return ();
@@ -795,6 +772,32 @@ of the libfunc or return statement.";
                 bar@0() -> ();
             "}, "#0: Belongs to two different functions.";
             "Statement in two functions")]
+#[test_case(indoc! {"
+                type felt252 = felt252;
+                type UninitializedFelt252 = Uninitialized<felt252>;
+
+                libfunc enable_ap_tracking = enable_ap_tracking;
+                libfunc disable_ap_tracking = disable_ap_tracking;
+                libfunc alloc_local_felt252 = alloc_local<felt252>;
+
+                disable_ap_tracking() -> ();
+                enable_ap_tracking() -> ();
+                alloc_local_felt252() -> ([1]);
+
+                return ();
+
+                foo@0() -> ();
+            "}, "#2: alloc_local is not allowed at this point.";
+            "Alloc local after re-enabling ap tracking")]
+#[test_case(indoc! {"
+                type felt252 = felt252;
+                type UninitializedFelt252 = Uninitialized<felt252>;
+
+                return ();
+
+                foo@0([1]: UninitializedFelt252) -> ();
+            "}, "Error from program registry: Function parameter type must be storable";
+            "Function that uses unstorable types")]
 fn compiler_errors(sierra_code: &str, expected_result: &str) {
     let program = ProgramParser::new().parse(sierra_code).unwrap();
     pretty_assertions::assert_eq!(

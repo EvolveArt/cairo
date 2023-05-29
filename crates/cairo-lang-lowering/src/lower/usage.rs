@@ -98,11 +98,16 @@ impl BlockUsages {
                         Statement::Expr(stmt) => {
                             self.handle_expr(function_body, stmt.expr, &mut usage)
                         }
+                        Statement::Continue(_) => (),
                         Statement::Return(stmt) => {
-                            self.handle_expr(function_body, stmt.expr, &mut usage)
+                            if let Some(expr) = stmt.expr_option {
+                                self.handle_expr(function_body, expr, &mut usage)
+                            };
                         }
                         Statement::Break(stmt) => {
-                            self.handle_expr(function_body, stmt.expr, &mut usage)
+                            if let Some(expr) = stmt.expr_option {
+                                self.handle_expr(function_body, expr, &mut usage)
+                            };
                         }
                     };
                 }

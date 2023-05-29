@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use cairo_lang_defs as defs;
@@ -142,10 +141,6 @@ pub trait LoweringGroup: SemanticGroup + Upcast<dyn SemanticGroup> {
     #[salsa::invoke(crate::implicits::scc_implicits)]
     fn scc_implicits(&self, function: ConcreteSCCRepresentative) -> Maybe<Vec<TypeId>>;
 
-    /// An array that sets the precedence of implicit types.
-    #[salsa::input]
-    fn implicit_precedence(&self) -> Arc<Vec<TypeId>>;
-
     // ### Queries related to panics ###
 
     /// Returns whether the function may panic.
@@ -250,7 +245,7 @@ pub trait LoweringGroup: SemanticGroup + Upcast<dyn SemanticGroup> {
     fn function_with_body_feedback_set(
         &self,
         function: ids::ConcreteFunctionWithBodyId,
-    ) -> Maybe<HashSet<ids::ConcreteFunctionWithBodyId>>;
+    ) -> Maybe<OrderedHashSet<ids::ConcreteFunctionWithBodyId>>;
 
     /// Returns whether the given function needs an additional withdraw_gas call.
     #[salsa::invoke(crate::graph_algorithms::feedback_set::needs_withdraw_gas)]
@@ -262,12 +257,7 @@ pub trait LoweringGroup: SemanticGroup + Upcast<dyn SemanticGroup> {
     fn priv_function_with_body_feedback_set_of_representative(
         &self,
         function: ConcreteSCCRepresentative,
-    ) -> Maybe<HashSet<ids::ConcreteFunctionWithBodyId>>;
-}
-
-pub fn init_lowering_group(db: &mut (dyn LoweringGroup + 'static)) {
-    // Initialize inputs.
-    db.set_implicit_precedence(Arc::new(vec![]));
+    ) -> Maybe<OrderedHashSet<ids::ConcreteFunctionWithBodyId>>;
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Hash)]

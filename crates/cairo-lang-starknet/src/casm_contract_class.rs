@@ -4,11 +4,13 @@ mod test;
 
 use cairo_lang_casm::hints::Hint;
 use cairo_lang_sierra::extensions::array::ArrayType;
+use cairo_lang_sierra::extensions::bitwise::BitwiseType;
 use cairo_lang_sierra::extensions::ec::EcOpType;
 use cairo_lang_sierra::extensions::enm::EnumType;
 use cairo_lang_sierra::extensions::felt252::Felt252Type;
 use cairo_lang_sierra::extensions::gas::{CostTokenType, GasBuiltinType};
 use cairo_lang_sierra::extensions::pedersen::PedersenType;
+use cairo_lang_sierra::extensions::poseidon::PoseidonType;
 use cairo_lang_sierra::extensions::range_check::RangeCheckType;
 use cairo_lang_sierra::extensions::segment_arena::SegmentArenaType;
 use cairo_lang_sierra::extensions::snapshot::SnapshotType;
@@ -33,6 +35,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::allowed_libfuncs::AllowedLibfuncsError;
+use crate::compiler_version::current_compiler_version_id;
 use crate::contract_class::{ContractClass, ContractEntryPoint};
 use crate::felt252_serde::{sierra_from_felt252s, Felt252SerdeError};
 
@@ -177,7 +180,7 @@ impl CasmContractClass {
             }
         }
 
-        let (_, program) = sierra_from_felt252s(&contract_class.sierra_program)?;
+        let (_, _, program) = sierra_from_felt252s(&contract_class.sierra_program)?;
         for entry_points in [
             &contract_class.entry_points_by_type.constructor,
             &contract_class.entry_points_by_type.external,
@@ -226,10 +229,10 @@ impl CasmContractClass {
         let builtin_types = UnorderedHashSet::<GenericTypeId>::from_iter(
             [
                 RangeCheckType::id(),
+                BitwiseType::id(),
                 PedersenType::id(),
                 EcOpType::id(),
-                // TODO(lior): Uncomment the line below once Poseidon is supported.
-                //   PoseidonType::ID,
+                PoseidonType::id(),
                 SegmentArenaType::id(),
                 GasBuiltinType::id(),
                 SystemType::id(),
@@ -331,9 +334,10 @@ impl CasmContractClass {
             None
         };
 
+        let compiler_version = current_compiler_version_id().to_string();
         Ok(Self {
             prime,
-            compiler_version: "1.0.0".to_string(),
+            compiler_version,
             bytecode,
             hints,
             pythonic_hints,

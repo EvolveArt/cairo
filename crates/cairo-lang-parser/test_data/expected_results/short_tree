@@ -3,13 +3,14 @@
     │   ├── child #0 (kind: ItemUse)
     │   │   ├── attributes (kind: AttributeList) []
     │   │   ├── use_kw (kind: TokenUse): 'use'
-    │   │   ├── path (kind: ExprPath)
-    │   │   │   ├── item #0 (kind: PathSegmentSimple)
+    │   │   ├── use_path (kind: UsePathSingle)
+    │   │   │   ├── ident (kind: PathSegmentSimple)
     │   │   │   │   └── ident (kind: TokenIdentifier): 'std'
-    │   │   │   ├── separator #0 (kind: TokenColonColon): '::'
-    │   │   │   └── item #1 (kind: PathSegmentSimple)
-    │   │   │       └── ident (kind: TokenIdentifier): 'format'
-    │   │   ├── alias_clause (kind: OptionAliasClauseEmpty) []
+    │   │   │   ├── colon_colon (kind: TokenColonColon): '::'
+    │   │   │   └── use_path (kind: UsePathLeaf)
+    │   │   │       ├── ident (kind: PathSegmentSimple)
+    │   │   │       │   └── ident (kind: TokenIdentifier): 'format'
+    │   │   │       └── alias_clause (kind: OptionAliasClauseEmpty) []
     │   │   └── semicolon (kind: TokenSemicolon): ';'
     │   └── child #1 (kind: FunctionWithBody)
     │       ├── attributes (kind: AttributeList) []
@@ -41,9 +42,10 @@
     │           ├── statements (kind: StatementList)
     │           │   └── child #0 (kind: StatementReturn)
     │           │       ├── return_kw (kind: TokenReturn): 'return'
-    │           │       ├── expr (kind: ExprPath)
-    │           │       │   └── item #0 (kind: PathSegmentSimple)
-    │           │       │       └── ident (kind: TokenIdentifier): 'a'
+    │           │       ├── expr_clause (kind: ExprClause)
+    │           │       │   └── expr (kind: ExprPath)
+    │           │       │       └── item #0 (kind: PathSegmentSimple)
+    │           │       │           └── ident (kind: TokenIdentifier): 'a'
     │           │       └── semicolon (kind: TokenSemicolon): ';'
     │           └── rbrace (kind: TokenRBrace): '}'
     └── eof (kind: TokenEndOfFile).

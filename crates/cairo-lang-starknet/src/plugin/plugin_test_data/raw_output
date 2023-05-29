@@ -11,13 +11,13 @@ mod TestContract {
     #[external]
     #[raw_output]
     fn test_raw_output() -> Span::<felt252> {
-        ArrayTrait::new().span()
+        Default::<Array<felt252>>::default().span()
     }
 
     #[external]
     #[raw_output]
     fn test_raw_output_with_spaces() -> Span     ::   < felt252  > {
-        ArrayTrait::new().span()
+        Default::<Array<felt252>>::default().span()
     }
 }
 
@@ -31,15 +31,16 @@ mod TestContract {
     #[external]
     #[raw_output]
     fn test_raw_output() -> Span::<felt252> {
-        ArrayTrait::new().span()
+        Default::<Array<felt252>>::default().span()
     }
 
     #[external]
     #[raw_output]
     fn test_raw_output_with_spaces() -> Span     ::   < felt252  > {
-        ArrayTrait::new().span()
+        Default::<Array<felt252>>::default().span()
     }
 
+    const TEST_CLASS_HASH: felt252 = 67263199161678115117699299156393439183956800545242418363603187499831400933;
     
 
     
@@ -61,6 +62,7 @@ mod TestContract {
         use option::OptionTrait;
         use option::OptionTraitImpl;
 
+        #[implicit_precedence(Pedersen, RangeCheck, Bitwise, EcOp, Poseidon, SegmentArena, GasBuiltin, System)]
         fn test_raw_output(mut data: Span::<felt252>) -> Span::<felt252> {
             internal::revoke_ap_tracking();
             gas::withdraw_gas().expect('Out of gas');
@@ -76,6 +78,7 @@ mod TestContract {
             gas::withdraw_gas_all(get_builtin_costs()).expect('Out of gas');
             super::test_raw_output()
         }
+        #[implicit_precedence(Pedersen, RangeCheck, Bitwise, EcOp, Poseidon, SegmentArena, GasBuiltin, System)]
         fn test_raw_output_with_spaces(mut data: Span::<felt252>) -> Span::<felt252> {
             internal::revoke_ap_tracking();
             gas::withdraw_gas().expect('Out of gas');

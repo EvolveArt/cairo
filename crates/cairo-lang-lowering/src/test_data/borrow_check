@@ -101,7 +101,7 @@ fn foo(ref x: ADrop, y: ADrop) {
 }
 
 fn bar(){
-  let mut data = ArrayTrait::new();
+  let mut data = Default::default();
   data.append(1);
   panic(data);
 }
@@ -138,7 +138,6 @@ End:
 
 blk1:
 Statements:
-  (v6: ()) <- struct_destructure(v5)
   (v3: ()) <- struct_construct()
   (v8: (test::ADrop, ())) <- struct_construct(v1, v3)
   (v9: core::PanicResult::<(test::ADrop, ())>) <- PanicResult::Ok(v8)
@@ -197,7 +196,7 @@ test_function_lowering
 
 //! > function
 fn foo() {
-   let mut arr = ArrayTrait::<u256>::new();
+   let mut arr: Array<u256> = Default::default();
    arr.append(1.into());
 }
 
