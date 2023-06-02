@@ -42,7 +42,6 @@ use cairo_lang_syntax::node::kind::SyntaxKind;
 use cairo_lang_syntax::node::stable_ptr::SyntaxStablePtr;
 use cairo_lang_syntax::node::utils::is_grandparent_of_kind;
 use cairo_lang_syntax::node::{ast, SyntaxNode, TypedSyntaxNode};
-use cairo_lang_utils::logging::init_logging;
 use cairo_lang_utils::ordered_hash_set::OrderedHashSet;
 use cairo_lang_utils::{try_extract_matches, OptionHelper, Upcast};
 use log::warn;
@@ -69,8 +68,6 @@ pub mod vfs;
 const MAX_CRATE_DETECTION_DEPTH: usize = 20;
 
 pub async fn serve_language_service() {
-    init_logging(log::LevelFilter::Warn);
-
     #[cfg(feature = "runtime-agnostic")]
     use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
@@ -122,6 +119,7 @@ impl NotificationService {
 pub struct Backend {
     pub client: Client,
     // TODO(spapini): Remove this once we support ParallelDatabase.
+    // State mutex should only be taken after db mutex is taken, to avoid deadlocks.
     pub db_mutex: tokio::sync::Mutex<RootDatabase>,
     pub state_mutex: tokio::sync::Mutex<State>,
     pub scarb: ScarbService,
@@ -179,11 +177,11 @@ impl Backend {
 
     // Refresh diagnostics and send diffs to client.
     async fn refresh_diagnostics(&self) {
+        let db = self.db().await;
         let mut state = self.state_mutex.lock().await;
 
         // Get all files. Try to go over open files first.
         let mut files_set: OrderedHashSet<_> = state.open_files.iter().copied().collect();
-        let db = self.db().await;
         for crate_id in db.crates() {
             for module_id in db.crate_modules(crate_id).iter() {
                 for file_id in db.module_files(*module_id).unwrap_or_default() {
@@ -547,8 +545,13 @@ impl LanguageServer for Backend {
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         let mut db = self.db().await;
         let uri = params.text_document.uri;
-        let path = uri.path();
-        self.detect_crate_for(&mut db, path).await;
+
+        // Try to detect the crate for physical files.
+        // The crate for virtual files is already known.
+        if uri.scheme() == "file" {
+            let path = uri.path();
+            self.detect_crate_for(&mut db, path).await;
+        }
 
         let file = self.file(&db, uri.clone());
         self.state_mutex.lock().await.open_files.insert(file);

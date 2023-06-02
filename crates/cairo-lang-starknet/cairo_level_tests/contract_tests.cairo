@@ -2,14 +2,19 @@ use array::ArrayTrait;
 use array::SpanTrait;
 use box::BoxTrait;
 use option::OptionTrait;
-use traits::Into;
+use traits::{TryInto, Into};
 use zeroable::Zeroable;
 use clone::Clone;
 use starknet::Event;
+use starknet::class_hash::Felt252TryIntoClassHash;
+use starknet::StorageAddress;
 use test::test_utils::{assert_eq, assert_ne};
 
 use super::utils::serialized_element;
 use super::utils::single_deserialize;
+
+#[starknet::interface]
+trait ITestContract {}
 
 #[contract]
 mod TestContract {
@@ -18,66 +23,67 @@ mod TestContract {
     use traits::Into;
     use starknet::StorageAddress;
 
+    #[starknet::storage]
     struct Storage {
         value: felt252,
         mapping: LegacyMap::<u128, bool>,
         large_mapping: LegacyMap::<u256, u256>,
     }
 
-    #[view]
-    fn get_plus_2(a: felt252) -> felt252 {
+    #[external]
+    fn get_plus_2(self: @Storage, a: felt252) -> felt252 {
         a + 2
     }
 
-    #[view]
-    fn spend_all_gas() {
-        spend_all_gas();
+    #[external]
+    fn spend_all_gas(self: @Storage) {
+        spend_all_gas(self);
     }
 
-    #[view]
-    fn get_appended_array(mut arr: Array<felt252>) -> Array<felt252> {
+    #[external]
+    fn get_appended_array(self: @Storage, mut arr: Array<felt252>) -> Array<felt252> {
         let elem = arr.len().into();
         arr.append(elem);
         arr
     }
 
     #[external]
-    fn set_value(a: felt252) {
-        value::write(a);
-    }
-
-    #[view]
-    fn get_value() -> felt252 {
-        value::read()
+    fn set_value(ref self: Storage, a: felt252) {
+        self.value.write(a);
     }
 
     #[external]
-    fn insert(key: u128) {
-        mapping::write(key, true)
+    fn get_value(self: @Storage, ) -> felt252 {
+        self.value.read()
     }
 
     #[external]
-    fn remove(key: u128) {
-        mapping::write(key, false)
-    }
-
-    #[view]
-    fn contains(key: u128) -> bool {
-        mapping::read(key)
+    fn insert(ref self: Storage, key: u128) {
+        self.mapping.write(key, true)
     }
 
     #[external]
-    fn set_large(key: u256, value: u256) {
-        large_mapping::write(key, value)
+    fn remove(ref self: Storage, key: u128) {
+        self.mapping.write(key, false)
     }
 
-    #[view]
-    fn get_large(key: u256) -> u256 {
-        large_mapping::read(key)
+    #[external]
+    fn contains(self: @Storage, key: u128) -> bool {
+        self.mapping.read(key)
     }
 
-    #[view]
-    fn test_storage_address(storage_address: StorageAddress) -> StorageAddress {
+    #[external]
+    fn set_large(ref self: Storage, key: u256, value: u256) {
+        self.large_mapping.write(key, value)
+    }
+
+    #[external]
+    fn get_large(self: @Storage, key: u256) -> u256 {
+        self.large_mapping.read(key)
+    }
+
+    #[external]
+    fn test_storage_address(self: @Storage, storage_address: StorageAddress) -> StorageAddress {
         storage_address
     }
 }
@@ -346,4 +352,45 @@ fn test_event_serde() {
     event_serde_tester(event.clone());
     let event = MyEventEnum::A(event);
     event_serde_tester(event.clone());
+}
+
+#[test]
+#[available_gas(30000000)]
+fn test_dispatcher_serde() {
+    // Contract Dispatcher
+    let contract_address = starknet::contract_address_const::<123>();
+    let contract0 = ITestContractDispatcher { contract_address };
+
+    // Serialize
+    let mut calldata = Default::default();
+    serde::Serde::serialize(@contract0, ref calldata);
+    let mut calldata_span = calldata.span();
+    assert(
+        calldata_span.len() == 1 | *calldata_span.pop_front().unwrap() == contract_address.into(),
+        'Serialize to 0'
+    );
+
+    // Deserialize
+    let mut serialized = calldata.span();
+    let contract0: ITestContractDispatcher = serde::Serde::deserialize(ref serialized).unwrap();
+    assert(contract0.contract_address == contract_address, 'Deserialize to Dispatcher');
+
+    // Library Dispatcher
+    let class_hash = TestContract::TEST_CLASS_HASH.try_into().unwrap();
+    let contract1 = ITestContractLibraryDispatcher { class_hash };
+
+    // Serialize
+    let mut calldata = Default::default();
+    serde::Serde::serialize(@contract1, ref calldata);
+    let mut calldata_span = calldata.span();
+    assert(
+        calldata_span.len() == 1 | *calldata_span.pop_front().unwrap() == class_hash.into(),
+        'Serialize to class_hash'
+    );
+
+    // Deserialize
+    let mut serialized = calldata.span();
+    let contract1: ITestContractLibraryDispatcher = serde::Serde::deserialize(ref serialized)
+        .unwrap();
+    assert(contract1.class_hash == class_hash, 'Deserialize to Dispatcher');
 }
