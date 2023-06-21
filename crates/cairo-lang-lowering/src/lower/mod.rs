@@ -1,6 +1,5 @@
 use block_builder::BlockBuilder;
 use cairo_lang_debug::DebugWithDb;
-use cairo_lang_defs::diagnostic_utils::StableLocationOption;
 use cairo_lang_diagnostics::Maybe;
 use cairo_lang_utils::ordered_hash_map::OrderedHashMap;
 use cairo_lang_utils::unordered_hash_map::UnorderedHashMap;
@@ -26,23 +25,25 @@ use self::context::{
     LoweredExprExternEnum, LoweringContext, LoweringFlowError,
 };
 use self::external::{extern_facade_expr, extern_facade_return_tys};
+use self::logical_op::lower_logical_op;
 use self::lower_if::lower_expr_if;
 use crate::blocks::FlatBlocks;
 use crate::db::LoweringGroup;
 use crate::diagnostic::LoweringDiagnosticKind::*;
 use crate::ids::{
-    FunctionLongId, FunctionWithBodyId, FunctionWithBodyLongId, GeneratedFunction,
+    FunctionLongId, FunctionWithBodyId, FunctionWithBodyLongId, GeneratedFunction, LocationId,
     SemanticFunctionIdEx, Signature,
 };
 use crate::lower::context::{LoweringResult, VarRequest};
 use crate::{
-    BlockId, FlatLowered, MatchArm, MatchEnumInfo, MatchExternInfo, MatchInfo, VariableId,
+    BlockId, FlatLowered, MatchArm, MatchEnumInfo, MatchExternInfo, MatchInfo, VarUsage, VariableId,
 };
 
 mod block_builder;
 pub mod context;
 mod external;
 pub mod generators;
+mod logical_op;
 mod lower_if;
 pub mod refs;
 pub mod usage;
@@ -123,15 +124,15 @@ pub fn lower_function(
             match block_sealed {
                 SealedBlockBuilder::GotoCallsite { mut builder, expr } => {
                     // Convert to a return.
+                    let location = ctx.get_location(semantic_block.stable_ptr.untyped());
                     let var = expr.unwrap_or_else(|| {
                         generators::StructConstruct {
                             inputs: vec![],
                             ty: unit_ty(ctx.db.upcast()),
-                            location: ctx.get_location(semantic_block.stable_ptr.untyped()),
+                            location,
                         }
                         .add(&mut ctx, &mut builder.statements)
                     });
-                    let location = ctx.get_location(semantic_block.stable_ptr.untyped());
                     builder.ret(&mut ctx, var, location)?;
                 }
                 SealedBlockBuilder::Ends(_) => {}
@@ -437,6 +438,24 @@ fn lower_single_pattern(
     Ok(())
 }
 
+/// Lowers a semantic expression to a VarUsage.
+///
+/// For example, if we have the code:
+/// foo(a + b)
+///
+/// then `a + b` will be assigned  variable and a VarUsage object whose origin
+/// is the location of the `a + b` expression.
+fn lower_expr_to_var_usage(
+    ctx: &mut LoweringContext<'_, '_>,
+    builder: &mut BlockBuilder,
+    expr_id: semantic::ExprId,
+) -> LoweringResult<VarUsage> {
+    Ok(VarUsage {
+        var_id: lower_expr(ctx, builder, expr_id)?.var(ctx, builder)?,
+        location: ctx.get_location(ctx.function_body.exprs[expr_id].stable_ptr().untyped()),
+    })
+}
+
 /// Lowers a semantic expression.
 fn lower_expr(
     ctx: &mut LoweringContext<'_, '_>,
@@ -450,6 +469,7 @@ fn lower_expr(
         semantic::Expr::Snapshot(expr) => lower_expr_snapshot(ctx, expr, builder),
         semantic::Expr::Desnap(expr) => lower_expr_desnap(ctx, expr, builder),
         semantic::Expr::Assignment(expr) => lower_expr_assignment(ctx, expr, builder),
+        semantic::Expr::LogicalOperator(expr) => lower_logical_op(ctx, builder, expr),
         semantic::Expr::Block(expr) => lower_expr_block(ctx, builder, expr),
         semantic::Expr::FunctionCall(expr) => lower_expr_function_call(ctx, expr, builder),
         semantic::Expr::Match(expr) => lower_expr_match(ctx, expr, builder),
@@ -581,7 +601,7 @@ fn lower_expr_function_call(
     let location = ctx.get_location(expr.stable_ptr.untyped());
 
     // TODO(spapini): Use the correct stable pointer.
-    let arg_inputs = lower_exprs_as_vars(ctx, &expr.args, builder)?;
+    let arg_inputs = lower_exprs_to_var_usages(ctx, &expr.args, builder)?;
     let ref_args_iter = expr
         .args
         .iter()
@@ -591,7 +611,7 @@ fn lower_expr_function_call(
     // If the function is panic(), do something special.
     if expr.function == get_core_function_id(ctx.db.upcast(), "panic".into(), vec![]) {
         let [input] = <[_; 1]>::try_from(arg_inputs).ok().unwrap();
-        return Err(LoweringFlowError::Panic(input));
+        return Err(LoweringFlowError::Panic(input.var_id));
     }
 
     // The following is relevant only to extern functions.
@@ -602,7 +622,7 @@ fn lower_expr_function_call(
             let lowered_expr = LoweredExprExternEnum {
                 function: expr.function,
                 concrete_enum_id,
-                inputs: arg_inputs,
+                inputs: arg_inputs.into_iter().map(|var_usage| var_usage.var_id).collect_vec(),
                 member_paths: ref_args_iter.cloned().collect(),
                 location,
             };
@@ -634,10 +654,10 @@ fn perform_function_call(
     ctx: &mut LoweringContext<'_, '_>,
     builder: &mut BlockBuilder,
     function: semantic::FunctionId,
-    inputs: Vec<VariableId>,
+    inputs: Vec<VarUsage>,
     extra_ret_tys: Vec<semantic::TypeId>,
     ret_ty: semantic::TypeId,
-    location: StableLocationOption,
+    location: LocationId,
 ) -> Result<(Vec<VariableId>, LoweredExpr), LoweringFlowError> {
     // If the function is not extern, simply call it.
     if function.try_get_extern_function_id(ctx.db.upcast()).is_none() {
@@ -671,6 +691,7 @@ fn perform_function_call(
                 ),
                 input: call_result.returns[0],
                 arms: vec![],
+                location,
             })));
         }
 
@@ -849,6 +870,7 @@ fn lower_expr_match(
         arms: zip_eq(zip_eq(concrete_variants, block_ids), arm_var_ids.into_iter())
             .map(|((variant_id, block_id), var_ids)| MatchArm { variant_id, block_id, var_ids })
             .collect(),
+        location,
     });
     builder.merge_and_end_with_match(ctx, match_info, sealed_blocks, location)
 }
@@ -868,7 +890,7 @@ fn lower_optimized_extern_match(
         .map_err(LoweringFlowError::Failed)?;
     if match_arms.len() != concrete_variants.len() {
         return Err(LoweringFlowError::Failed(
-            ctx.diagnostics.report_by_location(location, UnsupportedMatchArms),
+            ctx.diagnostics.report_by_location(location.get(ctx.db), UnsupportedMatchArms),
         ));
     }
     // Merge arm blocks.
@@ -1057,11 +1079,11 @@ fn extract_concrete_enum(
 
 /// Lowers a sequence of expressions and return them all. If the flow ended in the middle,
 /// propagates that flow error without returning any variable.
-fn lower_exprs_as_vars(
+fn lower_exprs_to_var_usages(
     ctx: &mut LoweringContext<'_, '_>,
     args: &[semantic::ExprFunctionCallArg],
     builder: &mut BlockBuilder,
-) -> Result<Vec<VariableId>, LoweringFlowError> {
+) -> Result<Vec<VarUsage>, LoweringFlowError> {
     // Since value expressions may depends on the same variables as the references, which must be
     // variables, all expressions must be evaluated before using the references for binding into the
     // call.
@@ -1070,7 +1092,7 @@ fn lower_exprs_as_vars(
     let mut value_iter = args
         .iter()
         .filter_map(|arg| try_extract_matches!(arg, ExprFunctionCallArg::Value))
-        .map(|arg_expr_id| lower_expr(ctx, builder, *arg_expr_id)?.var(ctx, builder))
+        .map(|arg_expr_id| lower_expr_to_var_usage(ctx, builder, *arg_expr_id))
         .collect::<Result<Vec<_>, _>>()?
         .into_iter();
     Ok(args
@@ -1161,7 +1183,7 @@ fn lower_expr_struct_ctor(
             inputs: members
                 .into_iter()
                 .map(|(_, member)| {
-                    lower_expr(ctx, builder, member_expr[member.id])?.var(ctx, builder)
+                    lower_expr(ctx, builder, member_expr[&member.id])?.var(ctx, builder)
                 })
                 .collect::<Result<Vec<_>, _>>()?,
             ty: expr.ty,
@@ -1229,6 +1251,7 @@ fn lower_expr_error_propagate(
                 var_ids: vec![err_value],
             },
         ],
+        location,
     });
     builder.merge_and_end_with_match(
         ctx,
@@ -1246,7 +1269,7 @@ fn lower_optimized_extern_error_propagate(
     ok_variant: &semantic::ConcreteVariant,
     err_variant: &semantic::ConcreteVariant,
     func_err_variant: &semantic::ConcreteVariant,
-    location: StableLocationOption,
+    location: LocationId,
 ) -> LoweringResult<LoweredExpr> {
     log::trace!("Started lowering of an optimized error-propagate expression.");
 

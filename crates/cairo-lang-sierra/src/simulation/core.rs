@@ -10,9 +10,8 @@ use super::LibfuncSimulationError;
 use crate::extensions::array::ArrayConcreteLibfunc;
 use crate::extensions::boolean::BoolConcreteLibfunc;
 use crate::extensions::core::CoreConcreteLibfunc::{
-    self, ApTracking, Array, Bitwise, Bool, BranchAlign, Drop, Dup, Ec, Enum, Felt252,
-    FunctionCall, Gas, Mem, Struct, Uint128, Uint16, Uint32, Uint64, Uint8, UnconditionalJump,
-    UnwrapNonZero,
+    self, ApTracking, Array, Bool, BranchAlign, Drop, Dup, Ec, Enum, Felt252, FunctionCall, Gas,
+    Mem, Struct, Uint128, Uint16, Uint32, Uint64, Uint8, UnconditionalJump, UnwrapNonZero,
 };
 use crate::extensions::ec::EcConcreteLibfunc;
 use crate::extensions::enm::{EnumConcreteLibfunc, EnumInitConcreteLibfunc};
@@ -59,18 +58,6 @@ pub fn simulate<
     simulate_function: SimulateFunction,
 ) -> Result<(Vec<CoreValue>, usize), LibfuncSimulationError> {
     match libfunc {
-        Bitwise(_) => match &inputs[..] {
-            [CoreValue::Uint128(a), CoreValue::Uint128(b)] => Ok((
-                vec![
-                    CoreValue::Uint128(a & b),
-                    CoreValue::Uint128(a | b),
-                    CoreValue::Uint128(a ^ b),
-                ],
-                0,
-            )),
-            [_, _] => Err(LibfuncSimulationError::MemoryLayoutMismatch),
-            _ => Err(LibfuncSimulationError::WrongNumberOfArgs),
-        },
         Drop(_) => match &inputs[..] {
             [_] => Ok((vec![], 0)),
             _ => Err(LibfuncSimulationError::WrongNumberOfArgs),
@@ -165,20 +152,26 @@ pub fn simulate<
             [_, _] => Err(LibfuncSimulationError::MemoryLayoutMismatch),
             _ => Err(LibfuncSimulationError::WrongNumberOfArgs),
         },
-        Array(ArrayConcreteLibfunc::PopFront(_)) => match &inputs[..] {
-            [CoreValue::Array(_)] => {
-                let mut iter = inputs.into_iter();
-                let mut arr = extract_matches!(iter.next().unwrap(), CoreValue::Array);
-                if arr.is_empty() {
-                    Ok((vec![CoreValue::Array(arr)], 1))
-                } else {
-                    let front = arr.remove(0);
-                    Ok((vec![CoreValue::Array(arr), front], 0))
+        Array(ArrayConcreteLibfunc::PopFront(_) | ArrayConcreteLibfunc::PopFrontConsume(_)) => {
+            match &inputs[..] {
+                [CoreValue::Array(_)] => {
+                    let mut iter = inputs.into_iter();
+                    let mut arr = extract_matches!(iter.next().unwrap(), CoreValue::Array);
+                    if arr.is_empty() {
+                        Ok((vec![CoreValue::Array(arr)], 1))
+                    } else {
+                        let front = arr.remove(0);
+                        if matches!(libfunc, Array(ArrayConcreteLibfunc::PopFrontConsume(_))) {
+                            Ok((vec![front], 0))
+                        } else {
+                            Ok((vec![CoreValue::Array(arr), front], 0))
+                        }
+                    }
                 }
+                [_] => Err(LibfuncSimulationError::WrongArgType),
+                _ => Err(LibfuncSimulationError::WrongNumberOfArgs),
             }
-            [_] => Err(LibfuncSimulationError::WrongArgType),
-            _ => Err(LibfuncSimulationError::WrongNumberOfArgs),
-        },
+        }
         Array(ArrayConcreteLibfunc::Get(_)) => match &inputs[..] {
             [CoreValue::RangeCheck, CoreValue::Array(_), CoreValue::Uint64(_)] => {
                 let mut iter = inputs.into_iter();
@@ -418,14 +411,6 @@ fn simulate_bool_libfunc(
             [_, _] => Err(LibfuncSimulationError::WrongArgType),
             _ => Err(LibfuncSimulationError::WrongNumberOfArgs),
         },
-        BoolConcreteLibfunc::Equal(_) => match inputs {
-            [CoreValue::Enum { index: a_index, .. }, CoreValue::Enum { index: b_index, .. }] => {
-                // The variant index defines the true/false "value". Index zero is false.
-                Ok((vec![], usize::from(*a_index == *b_index)))
-            }
-            [_, _] => Err(LibfuncSimulationError::MemoryLayoutMismatch),
-            _ => Err(LibfuncSimulationError::WrongNumberOfArgs),
-        },
         BoolConcreteLibfunc::ToFelt252(_) => match inputs {
             [CoreValue::Enum { index, .. }] => {
                 // The variant index defines the true/false "value". Index zero is false.
@@ -530,6 +515,18 @@ fn simulate_u128_libfunc(
             _ => Err(LibfuncSimulationError::WrongNumberOfArgs),
         },
         Uint128Concrete::ByteReverse(_) => todo!("ByteReverse"),
+        Uint128Concrete::Bitwise(_) => match inputs {
+            [CoreValue::Uint128(a), CoreValue::Uint128(b)] => Ok((
+                vec![
+                    CoreValue::Uint128(a & b),
+                    CoreValue::Uint128(a | b),
+                    CoreValue::Uint128(a ^ b),
+                ],
+                0,
+            )),
+            [_, _] => Err(LibfuncSimulationError::MemoryLayoutMismatch),
+            _ => Err(LibfuncSimulationError::WrongNumberOfArgs),
+        },
     }
 }
 
@@ -591,6 +588,7 @@ fn simulate_u8_libfunc(
         },
         Uint8Concrete::IsZero(_) => unimplemented!(),
         Uint8Concrete::Divmod(_) => unimplemented!(),
+        Uint8Concrete::Bitwise(_) => unimplemented!(),
         Uint8Concrete::WideMul(_) => match inputs {
             [CoreValue::Uint8(lhs), CoreValue::Uint8(rhs)] => {
                 Ok((vec![CoreValue::Uint16(u16::from(*lhs) * u16::from(*rhs))], 0))
@@ -659,6 +657,7 @@ fn simulate_u16_libfunc(
         },
         Uint16Concrete::IsZero(_) => unimplemented!(),
         Uint16Concrete::Divmod(_) => unimplemented!(),
+        Uint16Concrete::Bitwise(_) => unimplemented!(),
         Uint16Concrete::WideMul(_) => match inputs {
             [CoreValue::Uint16(lhs), CoreValue::Uint16(rhs)] => {
                 Ok((vec![CoreValue::Uint32(u32::from(*lhs) * u32::from(*rhs))], 0))
@@ -727,6 +726,7 @@ fn simulate_u32_libfunc(
         },
         Uint32Concrete::IsZero(_) => unimplemented!(),
         Uint32Concrete::Divmod(_) => unimplemented!(),
+        Uint32Concrete::Bitwise(_) => unimplemented!(),
         Uint32Concrete::WideMul(_) => match inputs {
             [CoreValue::Uint32(lhs), CoreValue::Uint32(rhs)] => {
                 Ok((vec![CoreValue::Uint64(u64::from(*lhs) * u64::from(*rhs))], 0))
@@ -795,6 +795,7 @@ fn simulate_u64_libfunc(
         },
         Uint64Concrete::IsZero(_) => unimplemented!(),
         Uint64Concrete::Divmod(_) => unimplemented!(),
+        Uint64Concrete::Bitwise(_) => unimplemented!(),
         Uint64Concrete::WideMul(_) => match inputs {
             [CoreValue::Uint64(lhs), CoreValue::Uint64(rhs)] => {
                 Ok((vec![CoreValue::Uint128(u128::from(*lhs) * u128::from(*rhs))], 0))

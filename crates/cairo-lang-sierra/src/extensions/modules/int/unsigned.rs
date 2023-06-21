@@ -5,6 +5,7 @@ use num_bigint::BigInt;
 use super::unsigned128::Uint128Type;
 use super::IntOperator;
 use crate::define_libfunc_hierarchy;
+use crate::extensions::bitwise::BitwiseType;
 use crate::extensions::felt252::Felt252Type;
 use crate::extensions::is_zero::{IsZeroLibfunc, IsZeroTraits};
 use crate::extensions::lib_func::{
@@ -48,6 +49,8 @@ pub trait UintTraits: Default {
     const TRY_FROM_FELT252: &'static str;
     /// The generic libfunc id that divides two integers.
     const DIVMOD: &'static str;
+    /// The generic libfunc id that provides bitwise operations on two integers.
+    const BITWISE: &'static str;
 }
 
 /// Trait for implementing multiplication for unsigned integers.
@@ -67,7 +70,7 @@ impl<TUintTraits: UintTraits> NoGenericArgsGenericType for UintType<TUintTraits>
     const STORABLE: bool = true;
     const DUPLICATABLE: bool = true;
     const DROPPABLE: bool = true;
-    const SIZE: i16 = 1;
+    const ZERO_SIZED: bool = false;
 }
 
 /// Libfunc for creating a constant unsigned integer.
@@ -172,12 +175,7 @@ impl<TUintTraits: UintTraits> NoGenericArgsGenericLibfunc for UintSquareRootLibf
                 ParamSignature::new(ty),
             ],
             vec![
-                OutputVarInfo {
-                    ty: range_check_type,
-                    ref_info: OutputVarReferenceInfo::Deferred(DeferredOutputKind::AddConst {
-                        param_idx: 0,
-                    }),
-                },
+                OutputVarInfo::new_builtin(range_check_type, 0),
                 OutputVarInfo {
                     ty: sqrt_ty,
                     ref_info: OutputVarReferenceInfo::NewTempVar { idx: 0 },
@@ -248,21 +246,18 @@ impl<TUintTraits: UintTraits> GenericLibfunc for UintOperationLibfunc<TUintTrait
             | (IntOperator::OverflowingSub, false) => OutputVarReferenceInfo::NewTempVar { idx: 0 },
         };
 
+        let rc_output_info = OutputVarInfo::new_builtin(range_check_type.clone(), 0);
+        let ty_param = ParamSignature::new(ty.clone());
         Ok(LibfuncSignature {
             param_signatures: vec![
-                ParamSignature::new(range_check_type.clone()).with_allow_add_const(),
-                ParamSignature::new(ty.clone()),
-                ParamSignature::new(ty.clone()),
+                ParamSignature::new(range_check_type).with_allow_add_const(),
+                ty_param.clone(),
+                ty_param,
             ],
             branch_signatures: vec![
                 BranchSignature {
                     vars: vec![
-                        OutputVarInfo {
-                            ty: range_check_type.clone(),
-                            ref_info: OutputVarReferenceInfo::Deferred(
-                                DeferredOutputKind::AddConst { param_idx: 0 },
-                            ),
-                        },
+                        rc_output_info.clone(),
                         OutputVarInfo {
                             ty: ty.clone(),
                             ref_info: OutputVarReferenceInfo::NewTempVar { idx: 0 },
@@ -272,12 +267,7 @@ impl<TUintTraits: UintTraits> GenericLibfunc for UintOperationLibfunc<TUintTrait
                 },
                 BranchSignature {
                     vars: vec![
-                        OutputVarInfo {
-                            ty: range_check_type,
-                            ref_info: OutputVarReferenceInfo::Deferred(
-                                DeferredOutputKind::AddConst { param_idx: 0 },
-                            ),
-                        },
+                        rc_output_info,
                         OutputVarInfo { ty, ref_info: wrapping_result_ref_info },
                     ],
                     ap_change: SierraApChange::Known { new_vars_only: false },
@@ -360,12 +350,7 @@ impl<TUintTraits: UintTraits> NoGenericArgsGenericLibfunc for UintDivmodLibfunc<
                 ParamSignature::new(nonzero_ty(context, &ty)?),
             ],
             vec![
-                OutputVarInfo {
-                    ty: range_check_type,
-                    ref_info: OutputVarReferenceInfo::Deferred(DeferredOutputKind::AddConst {
-                        param_idx: 0,
-                    }),
-                },
+                OutputVarInfo::new_builtin(range_check_type, 0),
                 OutputVarInfo {
                     ty: ty.clone(),
                     ref_info: OutputVarReferenceInfo::NewTempVar { idx: 0 },
@@ -373,6 +358,43 @@ impl<TUintTraits: UintTraits> NoGenericArgsGenericLibfunc for UintDivmodLibfunc<
                 OutputVarInfo { ty, ref_info: OutputVarReferenceInfo::NewTempVar { idx: 1 } },
             ],
             SierraApChange::Known { new_vars_only: false },
+        ))
+    }
+}
+
+/// Libfunc for computing the Bitwise (and,or,xor) of two uints.
+/// Returns 3 uints (and the updated builtin pointer).
+#[derive(Default)]
+pub struct UintBitwiseLibfunc<TUintTraits: UintTraits> {
+    _phantom: PhantomData<TUintTraits>,
+}
+impl<TUintTraits: UintTraits> NoGenericArgsGenericLibfunc for UintBitwiseLibfunc<TUintTraits> {
+    const STR_ID: &'static str = TUintTraits::BITWISE;
+
+    fn specialize_signature(
+        &self,
+        context: &dyn SignatureSpecializationContext,
+    ) -> Result<LibfuncSignature, SpecializationError> {
+        let bitwise_ty = context.get_concrete_type(BitwiseType::id(), &[])?;
+        let ty = context.get_concrete_type(TUintTraits::GENERIC_TYPE_ID, &[])?;
+        let deferred_ty_output_info = OutputVarInfo {
+            ty: ty.clone(),
+            ref_info: OutputVarReferenceInfo::Deferred(DeferredOutputKind::Generic),
+        };
+        let ty_param = ParamSignature::new(ty);
+        Ok(LibfuncSignature::new_non_branch_ex(
+            vec![
+                ParamSignature::new(bitwise_ty.clone()).with_allow_add_const(),
+                ty_param.clone(),
+                ty_param,
+            ],
+            vec![
+                OutputVarInfo::new_builtin(bitwise_ty, 0),
+                deferred_ty_output_info.clone(),
+                deferred_ty_output_info.clone(),
+                deferred_ty_output_info,
+            ],
+            SierraApChange::Known { new_vars_only: true },
         ))
     }
 }
@@ -413,6 +435,7 @@ define_libfunc_hierarchy! {
         FromFelt252(UintFromFelt252Libfunc<TUintTraits>),
         IsZero(IsZeroLibfunc<TUintTraits>),
         Divmod(UintDivmodLibfunc<TUintTraits>),
+        Bitwise(UintBitwiseLibfunc<TUintTraits>),
         WideMul(UintWideMulLibfunc<TUintTraits>),
     }, UintConcrete
 }
@@ -433,6 +456,7 @@ impl UintTraits for Uint8Traits {
     const TO_FELT252: &'static str = "u8_to_felt252";
     const TRY_FROM_FELT252: &'static str = "u8_try_from_felt252";
     const DIVMOD: &'static str = "u8_safe_divmod";
+    const BITWISE: &'static str = "u8_bitwise";
 }
 
 impl UintMulTraits for Uint8Traits {
@@ -466,6 +490,7 @@ impl UintTraits for Uint16Traits {
     const TO_FELT252: &'static str = "u16_to_felt252";
     const TRY_FROM_FELT252: &'static str = "u16_try_from_felt252";
     const DIVMOD: &'static str = "u16_safe_divmod";
+    const BITWISE: &'static str = "u16_bitwise";
 }
 
 impl UintMulTraits for Uint16Traits {
@@ -499,6 +524,7 @@ impl UintTraits for Uint32Traits {
     const TO_FELT252: &'static str = "u32_to_felt252";
     const TRY_FROM_FELT252: &'static str = "u32_try_from_felt252";
     const DIVMOD: &'static str = "u32_safe_divmod";
+    const BITWISE: &'static str = "u32_bitwise";
 }
 
 impl UintMulTraits for Uint32Traits {
@@ -532,6 +558,7 @@ impl UintTraits for Uint64Traits {
     const TO_FELT252: &'static str = "u64_to_felt252";
     const TRY_FROM_FELT252: &'static str = "u64_try_from_felt252";
     const DIVMOD: &'static str = "u64_safe_divmod";
+    const BITWISE: &'static str = "u64_bitwise";
 }
 
 impl UintMulTraits for Uint64Traits {

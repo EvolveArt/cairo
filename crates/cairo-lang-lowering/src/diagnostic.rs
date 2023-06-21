@@ -1,4 +1,4 @@
-use cairo_lang_defs::diagnostic_utils::{StableLocation, StableLocationOption};
+use cairo_lang_defs::diagnostic_utils::StableLocation;
 use cairo_lang_defs::ids::ModuleFileId;
 use cairo_lang_diagnostics::{
     DiagnosticAdded, DiagnosticEntry, DiagnosticLocation, Diagnostics, DiagnosticsBuilder,
@@ -6,6 +6,9 @@ use cairo_lang_diagnostics::{
 use cairo_lang_semantic::db::SemanticGroup;
 use cairo_lang_semantic::expr::inference::InferenceError;
 use cairo_lang_syntax::node::ids::SyntaxStablePtrId;
+use itertools::Itertools;
+
+use crate::Location;
 
 pub struct LoweringDiagnostics {
     pub diagnostics: DiagnosticsBuilder<LoweringDiagnostic>,
@@ -23,27 +26,30 @@ impl LoweringDiagnostics {
         stable_ptr: SyntaxStablePtrId,
         kind: LoweringDiagnosticKind,
     ) -> DiagnosticAdded {
-        self.report_by_location(StableLocationOption::new(self.module_file_id, stable_ptr), kind)
+        self.report_by_location(
+            Location::new(StableLocation::new(self.module_file_id, stable_ptr)),
+            kind,
+        )
     }
     pub fn report_by_location(
         &mut self,
-        stable_location: StableLocationOption,
+        location: Location,
         kind: LoweringDiagnosticKind,
     ) -> DiagnosticAdded {
-        self.diagnostics.add(LoweringDiagnostic { stable_location: stable_location.unwrap(), kind })
+        self.diagnostics.add(LoweringDiagnostic { location, kind })
     }
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct LoweringDiagnostic {
-    pub stable_location: StableLocation,
+    pub location: Location,
     pub kind: LoweringDiagnosticKind,
 }
 impl DiagnosticEntry for LoweringDiagnostic {
     type DbType = dyn SemanticGroup;
 
     fn format(&self, db: &Self::DbType) -> String {
-        match &self.kind {
+        let msg = match &self.kind {
             LoweringDiagnosticKind::Unreachable { .. } => "Unreachable code".into(),
             LoweringDiagnosticKind::NonZeroValueInMatch => {
                 "Match with a non-zero value is not supported.".into()
@@ -85,7 +91,9 @@ impl DiagnosticEntry for LoweringDiagnostic {
             LoweringDiagnosticKind::MemberPathLoop => {
                 "Currently, loops must change the entire variable.".into()
             }
-        }
+        };
+
+        itertools::chain!(self.location.notes.iter(), std::iter::once(&msg)).join(",\n")
     }
 
     #[allow(unreachable_patterns, clippy::single_match)]
@@ -93,12 +101,13 @@ impl DiagnosticEntry for LoweringDiagnostic {
         match &self.kind {
             LoweringDiagnosticKind::Unreachable { last_statement_ptr } => {
                 return self
+                    .location
                     .stable_location
                     .diagnostic_location_until(db.upcast(), *last_statement_ptr);
             }
             _ => {}
         }
-        self.stable_location.diagnostic_location(db.upcast())
+        self.location.stable_location.diagnostic_location(db.upcast())
     }
 }
 

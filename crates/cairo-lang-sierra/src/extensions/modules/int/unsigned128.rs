@@ -1,5 +1,5 @@
 use super::unsigned::{
-    Uint64Type, UintConstLibfunc, UintDivmodLibfunc, UintEqualLibfunc,
+    Uint64Type, UintBitwiseLibfunc, UintConstLibfunc, UintDivmodLibfunc, UintEqualLibfunc,
     UintOperationConcreteLibfunc, UintOperationLibfunc, UintSquareRootLibfunc,
     UintToFelt252Libfunc, UintTraits, UintType,
 };
@@ -9,8 +9,8 @@ use crate::extensions::bitwise::BitwiseType;
 use crate::extensions::felt252::Felt252Type;
 use crate::extensions::is_zero::{IsZeroLibfunc, IsZeroTraits};
 use crate::extensions::lib_func::{
-    BranchSignature, DeferredOutputKind, LibfuncSignature, OutputVarInfo, ParamSignature,
-    SierraApChange, SignatureSpecializationContext, SpecializationContext,
+    BranchSignature, LibfuncSignature, OutputVarInfo, ParamSignature, SierraApChange,
+    SignatureSpecializationContext, SpecializationContext,
 };
 use crate::extensions::range_check::RangeCheckType;
 use crate::extensions::{
@@ -34,7 +34,7 @@ impl NoGenericArgsGenericType for U128MulGuaranteeType {
     const STORABLE: bool = true;
     const DUPLICATABLE: bool = false;
     const DROPPABLE: bool = false;
-    const SIZE: i16 = 4;
+    const ZERO_SIZED: bool = false;
 }
 
 define_libfunc_hierarchy! {
@@ -49,6 +49,7 @@ define_libfunc_hierarchy! {
         FromFelt252(Uint128sFromFelt252Libfunc),
         ToFelt252(UintToFelt252Libfunc<Uint128Traits>),
         IsZero(IsZeroLibfunc<Uint128Traits>),
+        Bitwise(UintBitwiseLibfunc<Uint128Traits>),
         ByteReverse(U128ByteReverseLibfunc),
     }, Uint128Concrete
 }
@@ -69,6 +70,7 @@ impl UintTraits for Uint128Traits {
     const TO_FELT252: &'static str = "u128_to_felt252";
     const TRY_FROM_FELT252: &'static str = "u128_try_from_felt252";
     const DIVMOD: &'static str = "u128_safe_divmod";
+    const BITWISE: &'static str = "bitwise";
 }
 
 impl IsZeroTraits for Uint128Traits {
@@ -113,45 +115,27 @@ impl GenericLibfunc for Uint128OperationLibfunc {
         if !args.is_empty() {
             return Err(SpecializationError::WrongNumberOfGenericArgs);
         }
-        let ty = context.get_concrete_type(Uint128Type::id(), &[])?;
         let range_check_type = context.get_concrete_type(RangeCheckType::id(), &[])?;
+        let rc_output_info = OutputVarInfo::new_builtin(range_check_type.clone(), 0);
+        let u128_ty = context.get_concrete_type(Uint128Type::id(), &[])?;
+        let u128_param = ParamSignature::new(u128_ty.clone());
+        let u128_tempvar_output_info =
+            OutputVarInfo { ty: u128_ty, ref_info: OutputVarReferenceInfo::NewTempVar { idx: 0 } };
         Ok(LibfuncSignature {
             param_signatures: vec![
-                ParamSignature::new(range_check_type.clone()).with_allow_add_const(),
-                ParamSignature::new(ty.clone()),
-                ParamSignature::new(ty.clone()),
+                ParamSignature::new(range_check_type).with_allow_add_const(),
+                u128_param.clone(),
+                u128_param,
             ],
             branch_signatures: vec![
                 // No overflow.
                 BranchSignature {
-                    vars: vec![
-                        OutputVarInfo {
-                            ty: range_check_type.clone(),
-                            ref_info: OutputVarReferenceInfo::Deferred(
-                                DeferredOutputKind::AddConst { param_idx: 0 },
-                            ),
-                        },
-                        OutputVarInfo {
-                            ty: ty.clone(),
-                            ref_info: OutputVarReferenceInfo::NewTempVar { idx: 0 },
-                        },
-                    ],
+                    vars: vec![rc_output_info.clone(), u128_tempvar_output_info.clone()],
                     ap_change: SierraApChange::Known { new_vars_only: false },
                 },
                 // Overflow.
                 BranchSignature {
-                    vars: vec![
-                        OutputVarInfo {
-                            ty: range_check_type,
-                            ref_info: OutputVarReferenceInfo::Deferred(
-                                DeferredOutputKind::AddConst { param_idx: 0 },
-                            ),
-                        },
-                        OutputVarInfo {
-                            ty,
-                            ref_info: OutputVarReferenceInfo::NewTempVar { idx: 0 },
-                        },
-                    ],
+                    vars: vec![rc_output_info, u128_tempvar_output_info],
                     ap_change: SierraApChange::Known { new_vars_only: false },
                 },
             ],
@@ -222,12 +206,7 @@ impl NoGenericArgsGenericLibfunc for U128MulGuaranteeVerifyLibfunc {
                 ParamSignature::new(range_check_type.clone()).with_allow_add_const(),
                 ParamSignature::new(context.get_concrete_type(U128MulGuaranteeType::id(), &[])?),
             ],
-            vec![OutputVarInfo {
-                ty: range_check_type,
-                ref_info: OutputVarReferenceInfo::Deferred(DeferredOutputKind::AddConst {
-                    param_idx: 0,
-                }),
-            }],
+            vec![OutputVarInfo::new_builtin(range_check_type, 0)],
             SierraApChange::Known { new_vars_only: false },
         ))
     }
@@ -245,20 +224,16 @@ impl NoGenericArgsGenericLibfunc for Uint128sFromFelt252Libfunc {
         context: &dyn SignatureSpecializationContext,
     ) -> Result<LibfuncSignature, SpecializationError> {
         let range_check_type = context.get_concrete_type(RangeCheckType::id(), &[])?;
+        let rc_output_info = OutputVarInfo::new_builtin(range_check_type.clone(), 0);
         Ok(LibfuncSignature {
             param_signatures: vec![
-                ParamSignature::new(range_check_type.clone()).with_allow_add_const(),
+                ParamSignature::new(range_check_type).with_allow_add_const(),
                 ParamSignature::new(context.get_concrete_type(Felt252Type::id(), &[])?),
             ],
             branch_signatures: vec![
                 BranchSignature {
                     vars: vec![
-                        OutputVarInfo {
-                            ty: range_check_type.clone(),
-                            ref_info: OutputVarReferenceInfo::Deferred(
-                                DeferredOutputKind::AddConst { param_idx: 0 },
-                            ),
-                        },
+                        rc_output_info.clone(),
                         OutputVarInfo {
                             ty: context.get_concrete_type(Uint128Type::id(), &[])?,
                             ref_info: OutputVarReferenceInfo::SameAsParam { param_idx: 1 },
@@ -268,12 +243,7 @@ impl NoGenericArgsGenericLibfunc for Uint128sFromFelt252Libfunc {
                 },
                 BranchSignature {
                     vars: vec![
-                        OutputVarInfo {
-                            ty: range_check_type,
-                            ref_info: OutputVarReferenceInfo::Deferred(
-                                DeferredOutputKind::AddConst { param_idx: 0 },
-                            ),
-                        },
+                        rc_output_info,
                         OutputVarInfo {
                             ty: context.get_concrete_type(Uint128Type::id(), &[])?,
                             ref_info: OutputVarReferenceInfo::NewTempVar { idx: 0 },
@@ -311,12 +281,7 @@ impl NoGenericArgsGenericLibfunc for U128ByteReverseLibfunc {
             ],
             vec![
                 // bitwise
-                OutputVarInfo {
-                    ty: bitwise_ty,
-                    ref_info: OutputVarReferenceInfo::Deferred(DeferredOutputKind::AddConst {
-                        param_idx: 0,
-                    }),
-                },
+                OutputVarInfo::new_builtin(bitwise_ty, 0),
                 // result
                 OutputVarInfo {
                     ty: u128_ty,

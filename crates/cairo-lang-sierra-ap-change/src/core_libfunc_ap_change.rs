@@ -25,6 +25,7 @@ use cairo_lang_sierra::extensions::mem::MemConcreteLibfunc;
 use cairo_lang_sierra::extensions::nullable::NullableConcreteLibfunc;
 use cairo_lang_sierra::extensions::pedersen::PedersenConcreteLibfunc;
 use cairo_lang_sierra::extensions::poseidon::PoseidonConcreteLibfunc;
+use cairo_lang_sierra::extensions::starknet::testing::TestingConcreteLibfunc;
 use cairo_lang_sierra::extensions::starknet::StarkNetConcreteLibfunc;
 use cairo_lang_sierra::extensions::structure::StructConcreteLibfunc;
 use cairo_lang_sierra::ids::ConcreteTypeId;
@@ -60,6 +61,7 @@ pub fn core_libfunc_ap_change<InfoProvider: InvocationApChangeInfoProvider>(
             ArrayConcreteLibfunc::New(_) => vec![ApChange::Known(1)],
             ArrayConcreteLibfunc::Append(_) => vec![ApChange::Known(0)],
             ArrayConcreteLibfunc::PopFront(_)
+            | ArrayConcreteLibfunc::PopFrontConsume(_)
             | ArrayConcreteLibfunc::SnapshotPopFront(_)
             | ArrayConcreteLibfunc::SnapshotPopBack(_) => {
                 vec![ApChange::Known(1), ApChange::Known(1)]
@@ -78,14 +80,12 @@ pub fn core_libfunc_ap_change<InfoProvider: InvocationApChangeInfoProvider>(
                 vec![ApChange::Known(if info_provider.type_size(&libfunc.ty) == 1 { 0 } else { 1 })]
             }
         },
-        CoreConcreteLibfunc::Bitwise(_) => vec![ApChange::Known(0)],
         CoreConcreteLibfunc::BranchAlign(_) => vec![ApChange::FromMetadata],
         CoreConcreteLibfunc::Bool(libfunc) => match libfunc {
             BoolConcreteLibfunc::And(_) => vec![ApChange::Known(0)],
             BoolConcreteLibfunc::Not(_) => vec![ApChange::Known(1)],
             BoolConcreteLibfunc::Xor(_) => vec![ApChange::Known(1)],
             BoolConcreteLibfunc::Or(_) => vec![ApChange::Known(2)],
-            BoolConcreteLibfunc::Equal(_) => vec![ApChange::Known(1), ApChange::Known(1)],
             BoolConcreteLibfunc::ToFelt252(_) => vec![ApChange::Known(0)],
         },
         CoreConcreteLibfunc::Box(libfunc) => match libfunc {
@@ -162,10 +162,11 @@ pub fn core_libfunc_ap_change<InfoProvider: InvocationApChangeInfoProvider>(
             }
             Uint128Concrete::IsZero(_) => vec![ApChange::Known(0), ApChange::Known(0)],
             Uint128Concrete::ByteReverse(_) => vec![ApChange::Known(17)],
+            Uint128Concrete::Bitwise(_) => vec![ApChange::Known(0)],
         },
         CoreConcreteLibfunc::Uint256(libfunc) => match libfunc {
             Uint256Concrete::IsZero(_) => vec![ApChange::Known(0), ApChange::Known(0)],
-            Uint256Concrete::Divmod(_) => vec![ApChange::Known(43)],
+            Uint256Concrete::Divmod(_) => vec![ApChange::Known(21)],
             Uint256Concrete::SquareRoot(_) => vec![ApChange::Known(27)],
         },
         CoreConcreteLibfunc::Uint512(libfunc) => match libfunc {
@@ -238,10 +239,13 @@ pub fn core_libfunc_ap_change<InfoProvider: InvocationApChangeInfoProvider>(
             | StarkNetConcreteLibfunc::LibraryCall(_)
             | StarkNetConcreteLibfunc::ReplaceClass(_)
             | StarkNetConcreteLibfunc::SendMessageToL1(_)
-            | StarkNetConcreteLibfunc::Secp256K1(_) => {
+            | StarkNetConcreteLibfunc::Secp256(_) => {
                 vec![ApChange::Known(2), ApChange::Known(2)]
             }
-            StarkNetConcreteLibfunc::Testing(_) => vec![ApChange::Known(0)],
+            StarkNetConcreteLibfunc::Testing(libfunc) => match libfunc {
+                TestingConcreteLibfunc::PopLog(_) => vec![ApChange::Known(5), ApChange::Known(5)],
+                _ => vec![ApChange::Known(0)],
+            },
         },
         CoreConcreteLibfunc::Nullable(libfunc) => match libfunc {
             NullableConcreteLibfunc::Null(_) => vec![ApChange::Known(0)],
@@ -279,5 +283,6 @@ fn uint_ap_change<TUintTraits: UintMulTraits + IsZeroTraits>(
         UintConcrete::IsZero(_) => vec![ApChange::Known(0), ApChange::Known(0)],
         UintConcrete::Divmod(_) => vec![ApChange::Known(5)],
         UintConcrete::WideMul(_) => vec![ApChange::Known(0)],
+        UintConcrete::Bitwise(_) => vec![ApChange::Known(0)],
     }
 }

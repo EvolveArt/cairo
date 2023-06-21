@@ -2,6 +2,9 @@ use option::OptionTrait;
 use result::ResultTrait;
 use traits::{Into, TryInto, Default, Felt252DictValue};
 use zeroable::{IsZeroResult, NonZeroIntoImpl, Zeroable};
+use serde::Serde;
+use array::ArrayTrait;
+use array::SpanTrait;
 
 // TODO(spapini): Add method for const creation from Integer.
 trait NumericLiteral<T>;
@@ -11,6 +14,15 @@ impl NumericLiteralfelt252 of NumericLiteral<felt252>;
 extern type u128;
 impl NumericLiteralu128 of NumericLiteral<u128>;
 extern fn u128_const<value>() -> u128 nopanic;
+
+impl U128Serde of Serde<u128> {
+    fn serialize(self: @u128, ref output: Array<felt252>) {
+        Into::<u128, felt252>::into(*self).serialize(ref output);
+    }
+    fn deserialize(ref serialized: Span<felt252>) -> Option<u128> {
+        Option::Some(((*serialized.pop_front()?).try_into())?)
+    }
+}
 
 enum U128sFromFelt252Result {
     Narrow: u128,
@@ -198,12 +210,12 @@ extern fn u128_eq(lhs: u128, rhs: u128) -> bool implicits() nopanic;
 
 impl U128PartialEq of PartialEq<u128> {
     #[inline(always)]
-    fn eq(lhs: u128, rhs: u128) -> bool {
-        u128_eq(lhs, rhs)
+    fn eq(lhs: @u128, rhs: @u128) -> bool {
+        u128_eq(*lhs, *rhs)
     }
     #[inline(always)]
-    fn ne(lhs: u128, rhs: u128) -> bool {
-        !(lhs == rhs)
+    fn ne(lhs: @u128, rhs: @u128) -> bool {
+        !(*lhs == *rhs)
     }
 }
 
@@ -270,14 +282,23 @@ extern fn u8_try_from_felt252(a: felt252) -> Option<u8> implicits(RangeCheck) no
 
 extern fn u8_eq(lhs: u8, rhs: u8) -> bool implicits() nopanic;
 
+impl U8Serde of Serde<u8> {
+    fn serialize(self: @u8, ref output: Array<felt252>) {
+        Into::<u8, felt252>::into(*self).serialize(ref output);
+    }
+    fn deserialize(ref serialized: Span<felt252>) -> Option<u8> {
+        Option::Some(((*serialized.pop_front()?).try_into())?)
+    }
+}
+
 impl U8PartialEq of PartialEq<u8> {
     #[inline(always)]
-    fn eq(lhs: u8, rhs: u8) -> bool {
-        u8_eq(lhs, rhs)
+    fn eq(lhs: @u8, rhs: @u8) -> bool {
+        u8_eq(*lhs, *rhs)
     }
     #[inline(always)]
-    fn ne(lhs: u8, rhs: u8) -> bool {
-        !(lhs == rhs)
+    fn ne(lhs: @u8, rhs: @u8) -> bool {
+        !(*lhs == *rhs)
     }
 }
 
@@ -424,6 +445,28 @@ impl U8BitNot of BitNot<u8> {
         BoundedInt::max() - a
     }
 }
+extern fn u8_bitwise(lhs: u8, rhs: u8) -> (u8, u8, u8) implicits(Bitwise) nopanic;
+impl U8BitAnd of BitAnd<u8> {
+    #[inline(always)]
+    fn bitand(lhs: u8, rhs: u8) -> u8 {
+        let (v, _, _) = u8_bitwise(lhs, rhs);
+        v
+    }
+}
+impl U8BitXor of BitXor<u8> {
+    #[inline(always)]
+    fn bitxor(lhs: u8, rhs: u8) -> u8 {
+        let (_, v, _) = u8_bitwise(lhs, rhs);
+        v
+    }
+}
+impl U8BitOr of BitOr<u8> {
+    #[inline(always)]
+    fn bitor(lhs: u8, rhs: u8) -> u8 {
+        let (_, _, v) = u8_bitwise(lhs, rhs);
+        v
+    }
+}
 
 #[derive(Copy, Drop)]
 extern type u16;
@@ -436,14 +479,23 @@ extern fn u16_try_from_felt252(a: felt252) -> Option<u16> implicits(RangeCheck) 
 
 extern fn u16_eq(lhs: u16, rhs: u16) -> bool implicits() nopanic;
 
+impl U16Serde of Serde<u16> {
+    fn serialize(self: @u16, ref output: Array<felt252>) {
+        Into::<u16, felt252>::into(*self).serialize(ref output);
+    }
+    fn deserialize(ref serialized: Span<felt252>) -> Option<u16> {
+        Option::Some(((*serialized.pop_front()?).try_into())?)
+    }
+}
+
 impl U16PartialEq of PartialEq<u16> {
     #[inline(always)]
-    fn eq(lhs: u16, rhs: u16) -> bool {
-        u16_eq(lhs, rhs)
+    fn eq(lhs: @u16, rhs: @u16) -> bool {
+        u16_eq(*lhs, *rhs)
     }
     #[inline(always)]
-    fn ne(lhs: u16, rhs: u16) -> bool {
-        !(lhs == rhs)
+    fn ne(lhs: @u16, rhs: @u16) -> bool {
+        !(*lhs == *rhs)
     }
 }
 
@@ -591,6 +643,28 @@ impl U16BitNot of BitNot<u16> {
         BoundedInt::max() - a
     }
 }
+extern fn u16_bitwise(lhs: u16, rhs: u16) -> (u16, u16, u16) implicits(Bitwise) nopanic;
+impl U16BitAnd of BitAnd<u16> {
+    #[inline(always)]
+    fn bitand(lhs: u16, rhs: u16) -> u16 {
+        let (v, _, _) = u16_bitwise(lhs, rhs);
+        v
+    }
+}
+impl U16BitXor of BitXor<u16> {
+    #[inline(always)]
+    fn bitxor(lhs: u16, rhs: u16) -> u16 {
+        let (_, v, _) = u16_bitwise(lhs, rhs);
+        v
+    }
+}
+impl U16BitOr of BitOr<u16> {
+    #[inline(always)]
+    fn bitor(lhs: u16, rhs: u16) -> u16 {
+        let (_, _, v) = u16_bitwise(lhs, rhs);
+        v
+    }
+}
 
 #[derive(Copy, Drop)]
 extern type u32;
@@ -603,14 +677,23 @@ extern fn u32_try_from_felt252(a: felt252) -> Option<u32> implicits(RangeCheck) 
 
 extern fn u32_eq(lhs: u32, rhs: u32) -> bool implicits() nopanic;
 
+impl U32Serde of Serde<u32> {
+    fn serialize(self: @u32, ref output: Array<felt252>) {
+        Into::<u32, felt252>::into(*self).serialize(ref output);
+    }
+    fn deserialize(ref serialized: Span<felt252>) -> Option<u32> {
+        Option::Some(((*serialized.pop_front()?).try_into())?)
+    }
+}
+
 impl U32PartialEq of PartialEq<u32> {
     #[inline(always)]
-    fn eq(lhs: u32, rhs: u32) -> bool {
-        u32_eq(lhs, rhs)
+    fn eq(lhs: @u32, rhs: @u32) -> bool {
+        u32_eq(*lhs, *rhs)
     }
     #[inline(always)]
-    fn ne(lhs: u32, rhs: u32) -> bool {
-        !(lhs == rhs)
+    fn ne(lhs: @u32, rhs: @u32) -> bool {
+        !(*lhs == *rhs)
     }
 }
 
@@ -758,6 +841,28 @@ impl U32BitNot of BitNot<u32> {
         BoundedInt::max() - a
     }
 }
+extern fn u32_bitwise(lhs: u32, rhs: u32) -> (u32, u32, u32) implicits(Bitwise) nopanic;
+impl U32BitAnd of BitAnd<u32> {
+    #[inline(always)]
+    fn bitand(lhs: u32, rhs: u32) -> u32 {
+        let (v, _, _) = u32_bitwise(lhs, rhs);
+        v
+    }
+}
+impl U32BitXor of BitXor<u32> {
+    #[inline(always)]
+    fn bitxor(lhs: u32, rhs: u32) -> u32 {
+        let (_, v, _) = u32_bitwise(lhs, rhs);
+        v
+    }
+}
+impl U32BitOr of BitOr<u32> {
+    #[inline(always)]
+    fn bitor(lhs: u32, rhs: u32) -> u32 {
+        let (_, _, v) = u32_bitwise(lhs, rhs);
+        v
+    }
+}
 
 #[derive(Copy, Drop)]
 extern type u64;
@@ -770,14 +875,23 @@ extern fn u64_try_from_felt252(a: felt252) -> Option<u64> implicits(RangeCheck) 
 
 extern fn u64_eq(lhs: u64, rhs: u64) -> bool implicits() nopanic;
 
+impl U64Serde of Serde<u64> {
+    fn serialize(self: @u64, ref output: Array<felt252>) {
+        Into::<u64, felt252>::into(*self).serialize(ref output);
+    }
+    fn deserialize(ref serialized: Span<felt252>) -> Option<u64> {
+        Option::Some(((*serialized.pop_front()?).try_into())?)
+    }
+}
+
 impl U64PartialEq of PartialEq<u64> {
     #[inline(always)]
-    fn eq(lhs: u64, rhs: u64) -> bool {
-        u64_eq(lhs, rhs)
+    fn eq(lhs: @u64, rhs: @u64) -> bool {
+        u64_eq(*lhs, *rhs)
     }
     #[inline(always)]
-    fn ne(lhs: u64, rhs: u64) -> bool {
-        !(lhs == rhs)
+    fn ne(lhs: @u64, rhs: @u64) -> bool {
+        !(*lhs == *rhs)
     }
 }
 
@@ -925,6 +1039,28 @@ impl U64BitNot of BitNot<u64> {
         BoundedInt::max() - a
     }
 }
+extern fn u64_bitwise(lhs: u64, rhs: u64) -> (u64, u64, u64) implicits(Bitwise) nopanic;
+impl U64BitAnd of BitAnd<u64> {
+    #[inline(always)]
+    fn bitand(lhs: u64, rhs: u64) -> u64 {
+        let (v, _, _) = u64_bitwise(lhs, rhs);
+        v
+    }
+}
+impl U64BitXor of BitXor<u64> {
+    #[inline(always)]
+    fn bitxor(lhs: u64, rhs: u64) -> u64 {
+        let (_, v, _) = u64_bitwise(lhs, rhs);
+        v
+    }
+}
+impl U64BitOr of BitOr<u64> {
+    #[inline(always)]
+    fn bitor(lhs: u64, rhs: u64) -> u64 {
+        let (_, _, v) = u64_bitwise(lhs, rhs);
+        v
+    }
+}
 
 #[derive(Copy, Drop, PartialEq, Serde, storage_access::StorageAccess)]
 struct u256 {
@@ -973,8 +1109,8 @@ fn u256_overflow_mul(lhs: u256, rhs: u256) -> (u256, bool) {
         Result::Ok(high) => (
             high,
             overflow_value1 != 0_u128
-                | overflow_value2 != 0_u128
-                | (lhs.high > 0_u128 & rhs.high > 0_u128)
+                || overflow_value2 != 0_u128
+                || (lhs.high > 0_u128 && rhs.high > 0_u128)
         ),
         Result::Err(high) => (high, true),
     };
@@ -1100,9 +1236,19 @@ fn u256_from_felt252(lhs: felt252) -> u256 implicits(RangeCheck) nopanic {
 }
 
 extern fn u256_is_zero(a: u256) -> IsZeroResult<u256> implicits() nopanic;
+
+/// Calculates division with remainder of a u256 by a non-zero u256.
+/// Additionally returns a `U128MulGuarantee` that is required for validating the calculation.
 extern fn u256_safe_divmod(
     lhs: u256, rhs: NonZero<u256>
-) -> (u256, u256) implicits(RangeCheck) nopanic;
+) -> (u256, u256, U128MulGuarantee) implicits(RangeCheck) nopanic;
+
+/// Calculates division with remainder of a u256 by a non-zero u256.
+#[inline(always)]
+fn u256_safe_div_rem(lhs: u256, rhs: NonZero<u256>) -> (u256, u256) implicits(RangeCheck) nopanic {
+    let (q, r, _) = u256_safe_divmod(lhs, rhs);
+    (q, r)
+}
 extern fn u256_sqrt(a: u256) -> u128 implicits(RangeCheck) nopanic;
 
 #[panic_with('u256 is 0', u256_as_non_zero)]
@@ -1121,7 +1267,7 @@ impl U256TryIntoNonZero of TryInto<u256, NonZero<u256>> {
 
 impl U256Div of Div<u256> {
     fn div(lhs: u256, rhs: u256) -> u256 {
-        let (q, r) = u256_safe_divmod(lhs, rhs.try_into().expect('Division by 0'));
+        let (q, r) = u256_safe_div_rem(lhs, rhs.try_into().expect('Division by 0'));
         q
     }
 }
@@ -1134,7 +1280,7 @@ impl U256DivEq of DivEq<u256> {
 
 impl U256Rem of Rem<u256> {
     fn rem(lhs: u256, rhs: u256) -> u256 {
-        let (q, r) = u256_safe_divmod(lhs, rhs.try_into().expect('Division by 0'));
+        let (q, r) = u256_safe_div_rem(lhs, rhs.try_into().expect('Division by 0'));
         r
     }
 }
@@ -1147,7 +1293,7 @@ impl U256RemEq of RemEq<u256> {
 
 impl U256DivRem of DivRem<u256> {
     fn div_rem(lhs: u256, rhs: NonZero<u256>) -> (u256, u256) {
-        u256_safe_divmod(lhs, rhs)
+        u256_safe_div_rem(lhs, rhs)
     }
 }
 
@@ -1450,6 +1596,7 @@ impl U128Felt252DictValue of Felt252DictValue<u128> {
         0
     }
 }
+
 impl U8IntoU16 of Into<u8, u16> {
     fn into(self: u8) -> u16 {
         upcast(self)
@@ -1498,6 +1645,24 @@ impl U128TryIntoU8 of TryInto<u128, u8> {
     }
 }
 
+impl U8IntoU256 of Into<u8, u256> {
+    fn into(self: u8) -> u256 {
+        u256 { low: upcast(self), high: 0_u128 }
+    }
+}
+
+impl U256TryIntoU8 of TryInto<u256, u8> {
+    fn try_into(self: u256) -> Option<u8> {
+        let u256{low: low, high: high } = self;
+
+        if high != 0 {
+            return Option::None(());
+        }
+
+        low.try_into()
+    }
+}
+
 impl U16IntoU32 of Into<u16, u32> {
     fn into(self: u16) -> u32 {
         upcast(self)
@@ -1534,6 +1699,24 @@ impl U128TryIntoU16 of TryInto<u128, u16> {
     }
 }
 
+impl U16IntoU256 of Into<u16, u256> {
+    fn into(self: u16) -> u256 {
+        u256 { low: upcast(self), high: 0_u128 }
+    }
+}
+
+impl U256TryIntoU16 of TryInto<u256, u16> {
+    fn try_into(self: u256) -> Option<u16> {
+        let u256{low: low, high: high } = self;
+
+        if high != 0 {
+            return Option::None(());
+        }
+
+        low.try_into()
+    }
+}
+
 impl U32IntoU64 of Into<u32, u64> {
     fn into(self: u32) -> u64 {
         upcast(self)
@@ -1558,6 +1741,24 @@ impl U128TryIntoU32 of TryInto<u128, u32> {
     }
 }
 
+impl U32IntoU256 of Into<u32, u256> {
+    fn into(self: u32) -> u256 {
+        u256 { low: upcast(self), high: 0_u128 }
+    }
+}
+
+impl U256TryIntoU32 of TryInto<u256, u32> {
+    fn try_into(self: u256) -> Option<u32> {
+        let u256{low: low, high: high } = self;
+
+        if high != 0 {
+            return Option::None(());
+        }
+
+        low.try_into()
+    }
+}
+
 impl U64IntoU128 of Into<u64, u128> {
     fn into(self: u64) -> u128 {
         upcast(self)
@@ -1569,6 +1770,43 @@ impl U128TryIntoU64 of TryInto<u128, u64> {
         downcast(self)
     }
 }
+
+impl U64IntoU256 of Into<u64, u256> {
+    fn into(self: u64) -> u256 {
+        u256 { low: upcast(self), high: 0_u128 }
+    }
+}
+
+impl U256TryIntoU64 of TryInto<u256, u64> {
+    fn try_into(self: u256) -> Option<u64> {
+        let u256{low: low, high: high } = self;
+
+        if high != 0 {
+            return Option::None(());
+        }
+
+        low.try_into()
+    }
+}
+
+impl U128IntoU256 of Into<u128, u256> {
+    fn into(self: u128) -> u256 {
+        u256 { low: self, high: 0_u128 }
+    }
+}
+
+impl U256TryIntoU128 of TryInto<u256, u128> {
+    fn try_into(self: u256) -> Option<u128> {
+        let u256{low: low, high: high } = self;
+
+        if high != 0 {
+            return Option::None(());
+        }
+
+        Option::Some(low)
+    }
+}
+
 
 // === Zeroable ===
 
