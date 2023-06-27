@@ -20,7 +20,9 @@ pub fn create_bool(
     let unit = StructConstruct { inputs: vec![], ty: corelib::unit_ty(semantic_db), location }
         .add(ctx, &mut builder.statements);
 
-    generators::EnumConstruct { input: unit, variant, location }.add(ctx, &mut builder.statements)
+    generators::EnumConstruct { input: unit, variant, location }
+        .add(ctx, &mut builder.statements)
+        .var_id
 }
 
 /// Lowers an expression of type [semantic::ExprLogicalOperator].
