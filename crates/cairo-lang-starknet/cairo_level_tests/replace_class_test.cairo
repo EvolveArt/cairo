@@ -13,7 +13,7 @@ trait IWithReplace<TContractState> {
 }
 
 #[starknet::contract]
-mod ContractA {
+mod contract_a {
     use core::traits::TryInto;
     use option::OptionTrait;
     use core::result::ResultTrait;
@@ -43,7 +43,7 @@ trait IWithFoo<TContractState> {
 }
 
 #[starknet::contract]
-mod ContractB {
+mod contract_b {
     #[storage]
     struct Storage {
         value: u128, 
@@ -59,19 +59,17 @@ mod ContractB {
 #[available_gas(30000000)]
 fn test_replace_flow() {
     // Deploy ContractA with 100 in the storage.
-    let mut calldata = Default::default();
-    calldata.append(100);
     let (address0, _) = deploy_syscall(
-        class_hash: ContractA::TEST_CLASS_HASH.try_into().unwrap(),
+        class_hash: contract_a::TEST_CLASS_HASH.try_into().unwrap(),
         contract_address_salt: 0,
-        calldata: calldata.span(),
+        calldata: array![100].span(),
         deploy_from_zero: false
     )
         .unwrap();
 
     // Replace its class hash to Class B.
     let mut contract0 = IWithReplaceDispatcher { contract_address: address0 };
-    contract0.replace(ContractB::TEST_CLASS_HASH.try_into().unwrap());
+    contract0.replace(contract_b::TEST_CLASS_HASH.try_into().unwrap());
 
     // Read the previously stored value.
     let mut contract1 = IWithFooDispatcher { contract_address: address0 };

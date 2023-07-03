@@ -240,9 +240,10 @@ impl LoweredExpr {
             LoweredExpr::Tuple { exprs, location } => {
                 let inputs: Vec<_> = exprs
                     .into_iter()
-                    .map(|expr| expr.var(ctx, builder))
+                    .map(|expr| expr.as_var_usage(ctx, builder))
                     .collect::<Result<Vec<_>, _>>()?;
-                let tys = inputs.iter().map(|var| ctx.variables[*var].ty).collect();
+                let tys =
+                    inputs.iter().map(|var_usage| ctx.variables[var_usage.var_id].ty).collect();
                 let ty = ctx.db.intern_type(semantic::TypeLongId::Tuple(tys));
                 Ok(generators::StructConstruct { inputs, ty, location }
                     .add(ctx, &mut builder.statements))
@@ -255,9 +256,9 @@ impl LoweredExpr {
                 Ok(builder.get_ref(ctx, &member_path).unwrap())
             }
             LoweredExpr::Snapshot { expr, location } => {
+                let input = expr.clone().as_var_usage(ctx, builder)?;
                 let (original, snapshot) =
-                    generators::Snapshot { input: expr.clone().var(ctx, builder)?, location }
-                        .add(ctx, &mut builder.statements);
+                    generators::Snapshot { input, location }.add(ctx, &mut builder.statements);
                 if let LoweredExpr::Member(member_path, _location) = &*expr {
                     builder.update_ref(ctx, member_path, original);
                 }
@@ -341,21 +342,20 @@ impl LoweredExprExternEnum {
                 arm_var_ids.push(var_ids);
                 let maybe_input =
                     extern_facade_expr(ctx, concrete_variant.ty, variant_vars, self.location)
-                        .var(ctx, &mut subscope);
+                        .as_var_usage(ctx, &mut subscope);
                 let input = match maybe_input {
-                    Ok(var) => var,
+                    Ok(var_usage) => var_usage,
                     Err(err) => {
                         return lowering_flow_error_to_sealed_block(ctx, subscope, err)
                             .map(|sb| (sb, block_id));
                     }
                 };
                 let result = generators::EnumConstruct {
-                    input: VarUsage { var_id: input, location: self.location },
+                    input,
                     variant: concrete_variant,
                     location: self.location,
                 }
-                .add(ctx, &mut subscope.statements)
-                .var_id;
+                .add(ctx, &mut subscope.statements);
                 Ok((subscope.goto_callsite(Some(result)), block_id))
             })
             .collect::<Result<Vec<_>, _>>()
@@ -365,7 +365,11 @@ impl LoweredExprExternEnum {
 
         let match_info = MatchInfo::Extern(MatchExternInfo {
             function: self.function.lowered(ctx.db),
-            inputs: self.inputs,
+            inputs: self
+                .inputs
+                .into_iter()
+                .map(|var_id| VarUsage { var_id, location: ctx.variables[var_id].location })
+                .collect(),
             arms: zip_eq(zip_eq(concrete_variants, block_ids), arm_var_ids)
                 .map(|((variant_id, block_id), var_ids)| MatchArm { variant_id, block_id, var_ids })
                 .collect(),
@@ -384,7 +388,7 @@ pub type LoweringResult<T> = Result<T, LoweringFlowError>;
 pub enum LoweringFlowError {
     /// Computation failure. A corresponding diagnostic should be emitted.
     Failed(DiagnosticAdded),
-    Panic(VariableId),
+    Panic(VariableId, LocationId),
     Return(VariableId, LocationId),
     /// Every match arm is terminating - does not flow to parent builder
     /// e.g. returns or panics.
@@ -394,7 +398,7 @@ impl LoweringFlowError {
     pub fn is_unreachable(&self) -> bool {
         match self {
             LoweringFlowError::Failed(_) => false,
-            LoweringFlowError::Panic(_)
+            LoweringFlowError::Panic(_, _)
             | LoweringFlowError::Return(_, _)
             | LoweringFlowError::Match(_) => true,
         }
@@ -413,7 +417,7 @@ pub fn lowering_flow_error_to_sealed_block(
         LoweringFlowError::Return(return_var, location) => {
             builder.ret(ctx, return_var, location)?;
         }
-        LoweringFlowError::Panic(data_var) => {
+        LoweringFlowError::Panic(data_var, location) => {
             let panic_instance = generators::StructConstruct {
                 inputs: vec![],
                 ty: get_ty_by_name(
@@ -422,17 +426,16 @@ pub fn lowering_flow_error_to_sealed_block(
                     "Panic".into(),
                     vec![],
                 ),
-                location: ctx.variables[data_var].location,
+                location,
             }
-            .add(ctx, &mut builder.statements)
-            .var_id;
+            .add(ctx, &mut builder.statements);
             let err_instance = generators::StructConstruct {
-                inputs: vec![panic_instance, data_var],
+                inputs: vec![panic_instance, VarUsage { var_id: data_var, location }],
                 ty: ctx.db.intern_type(TypeLongId::Tuple(vec![
-                    ctx.variables[panic_instance].ty,
+                    ctx.variables[panic_instance.var_id].ty,
                     ctx.variables[data_var].ty,
                 ])),
-                location: ctx.variables[data_var].location,
+                location,
             }
             .add(ctx, &mut builder.statements)
             .var_id;

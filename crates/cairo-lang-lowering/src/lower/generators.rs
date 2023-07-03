@@ -81,7 +81,7 @@ impl Call {
 
         builder.push_statement(Statement::Call(StatementCall {
             function: self.function,
-            inputs: self.inputs.into_iter().map(|var_usage| var_usage.var_id).collect(),
+            inputs: self.inputs,
             outputs,
             location: self.location,
         }));
@@ -115,7 +115,7 @@ impl EnumConstruct {
         let output = ctx.new_var(VarRequest { ty, location: self.location });
         builder.push_statement(Statement::EnumConstruct(StatementEnumConstruct {
             variant: self.variant,
-            input: self.input.var_id,
+            input: self.input,
             output,
         }));
         VarUsage { var_id: output, location: self.location }
@@ -124,7 +124,7 @@ impl EnumConstruct {
 
 /// Generator for [StatementSnapshot].
 pub struct Snapshot {
-    pub input: VariableId,
+    pub input: VarUsage,
     pub location: LocationId,
 }
 impl Snapshot {
@@ -133,7 +133,7 @@ impl Snapshot {
         ctx: &mut LoweringContext<'_, '_>,
         builder: &mut StatementsBuilder,
     ) -> (VariableId, VariableId) {
-        let input_var = &ctx.variables[self.input];
+        let input_var = &ctx.variables[self.input.var_id];
         let input_ty = input_var.ty;
         let ty = ctx.db.intern_type(semantic::TypeLongId::Snapshot(input_ty));
 
@@ -152,7 +152,7 @@ impl Snapshot {
 
 /// Generator for [StatementDesnap].
 pub struct Desnap {
-    pub input: VariableId,
+    pub input: VarUsage,
     pub location: LocationId,
 }
 impl Desnap {
@@ -162,7 +162,7 @@ impl Desnap {
         builder: &mut StatementsBuilder,
     ) -> VarUsage {
         let ty = extract_matches!(
-            ctx.db.lookup_intern_type(ctx.variables[self.input].ty),
+            ctx.db.lookup_intern_type(ctx.variables[self.input.var_id].ty),
             semantic::TypeLongId::Snapshot
         );
         let output = ctx.new_var(VarRequest { ty, location: self.location });
@@ -189,7 +189,8 @@ impl StructDestructure {
     ) -> Vec<VariableId> {
         let outputs: Vec<_> = self.var_reqs.into_iter().map(|req| ctx.new_var(req)).collect();
         builder.push_statement(Statement::StructDestructure(StatementStructDestructure {
-            input: self.input,
+            // TODO(ilya): Fix to usage location.
+            input: VarUsage { var_id: self.input, location: ctx.variables[self.input].location },
             outputs: outputs.clone(),
         }));
         outputs
@@ -227,7 +228,7 @@ impl StructMemberAccess {
 
 /// Generator for [StatementStructConstruct].
 pub struct StructConstruct {
-    pub inputs: Vec<VariableId>,
+    pub inputs: Vec<VarUsage>,
     pub ty: semantic::TypeId,
     pub location: LocationId,
 }
